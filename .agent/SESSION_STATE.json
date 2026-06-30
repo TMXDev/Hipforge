@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0",
+  "project": "HIPForge",
+  "last_updated": "YYYY-MM-DDTHH:MM:SS",
+  "last_session": "",
+  "mode": "pre-hackathon",
+  "mode_notes": "External APIs (Fireworks AI) and compiler tools (hipify, hipcc) are mocked. Switch mode to 'hackathon' when real services become available.",
+
+  "phase": {
+    "current": 1,
+    "current_session": "1.1",
+    "current_session_name": "Create Project Structure",
+    "status": "not_started"
+  },
+
+  "sessions": {
+    "1.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "2.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "2.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "2.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "3.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "3.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "3.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "4.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "4.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "4.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "4.4": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "5.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "5.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "6.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "6.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "6.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "6.4": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "7.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "7.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "8.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "8.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "8.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "8.4": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "9.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "9.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "9.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "9.4": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "9.5": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "10.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "11.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "11.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "12.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "12.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "13.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "13.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "13.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "14.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "14.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "14.3": {"status": "not_started", "gate_passed": false, "notes": ""}
+  },
+
+  "mocked_services": {
+    "fireworks_ai": {
+      "status": "mocked",
+      "mock_file": "backend/app/agents/mock_client.py",
+      "real_file": "backend/app/agents/fireworks_client.py",
+      "swap_trigger": "Set USE_MOCK_AI=false in .env when Fireworks API key is available",
+      "ready_to_swap": false
+    },
+    "hipify_clang": {
+      "status": "mocked",
+      "mock_file": "backend/app/compiler/mock_hipify_runner.py",
+      "real_file": "backend/app/compiler/hipify_runner.py",
+      "swap_trigger": "Set USE_MOCK_COMPILER=false in .env when ROCm is available on the machine",
+      "ready_to_swap": false
+    },
+    "hipcc": {
+      "status": "mocked",
+      "mock_file": "backend/app/compiler/mock_hipcc_runner.py",
+      "real_file": "backend/app/compiler/hipcc_runner.py",
+      "swap_trigger": "Set USE_MOCK_COMPILER=false in .env when ROCm is available on the machine",
+      "ready_to_swap": false
+    }
+  },
+
+  "blocked_items": [],
+
+  "decisions_made": [],
+
+  "next_action": "Paste Session 1.1 from IMPLEMENTATION_PROMPTS.md to begin."
+}
