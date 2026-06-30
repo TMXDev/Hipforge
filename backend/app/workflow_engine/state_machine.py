@@ -1,6 +1,7 @@
 from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine import states
 from app.workflow_engine.transitions import determine_next_state
+from app.redis.publisher import publish_event
 
 class WorkflowEngine:
     """
@@ -44,23 +45,25 @@ class WorkflowEngine:
             if state == "COMPLETED":
                 from app.redis.client import redis_client
                 from app.redis.keys import status_key
-                from app.redis.publisher import publish_event
-                
                 await redis_client.set(status_key(self.context.migration_id), "COMPLETED")
-                await publish_event(self.context.migration_id, "COMPLETED", "completed", "Migration completed successfully.")
                 
             elif state == "FAILED":
                 from app.redis.client import redis_client
                 from app.redis.keys import status_key
-                from app.redis.publisher import publish_event
-                
                 await redis_client.set(status_key(self.context.migration_id), "FAILED")
-                await publish_event(self.context.migration_id, "FAILED", "failed", "Migration failed.")
                 
             handler = self.state_registry.get(state)
             if not handler:
                 raise ValueError(f"No handler registered for state: {state}")
                 
+            # Publish started event before calling the handler
+            await publish_event(
+                migration_id=self.context.migration_id,
+                stage=state,
+                status="started",
+                message=f"Starting stage {state}..."
+            )
+            
             try:
                 # Call state handler to run its stub side effects (like patching incrementing attempts)
                 await handler(self.context)
@@ -69,8 +72,27 @@ class WorkflowEngine:
                     success = getattr(self.context, "compilation_success", False)
                 else:
                     success = True
-            except Exception:
+                error_msg = "State execution failed."
+            except Exception as e:
                 success = False
+                error_msg = str(e)
+                
+            if success:
+                # Publish completed event after each state succeeds
+                await publish_event(
+                    migration_id=self.context.migration_id,
+                    stage=state,
+                    status="completed",
+                    message=f"Completed stage {state} successfully."
+                )
+            else:
+                # Publish failed event with error message on failure
+                await publish_event(
+                    migration_id=self.context.migration_id,
+                    stage=state,
+                    status="failed",
+                    message=f"Stage {state} failed: {error_msg}"
+                )
                 
             next_state = determine_next_state(state, success, self.context)
             
@@ -78,4 +100,5 @@ class WorkflowEngine:
             self.context.current_state = next_state
             
         return previous_state
+
 

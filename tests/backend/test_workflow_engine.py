@@ -36,10 +36,31 @@ def test_workflow_engine_traversal(redis_test_client):
             
         engine.state_registry[state_name] = make_wrapper(handler, state_name)
         
-    async def run_engine():
-        return await engine.run()
+    events_received = []
+    
+    async def run_engine_with_pubsub():
+        from app.redis.keys import events_channel
+        import json
         
-    final_state = asyncio.run(run_engine())
+        # Subscribe to the events channel
+        pubsub = redis_test_client.pubsub()
+        await pubsub.subscribe(events_channel(migration_id))
+        await asyncio.sleep(0.01)
+        
+        # Run engine
+        final_state = await engine.run()
+        
+        # Pull all messages from pubsub
+        while True:
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
+            if msg is None:
+                break
+            events_received.append(json.loads(msg["data"]))
+            
+        await pubsub.aclose()
+        return final_state
+        
+    final_state = asyncio.run(run_engine_with_pubsub())
     
     expected_order = [
         "QUEUED",
@@ -68,6 +89,18 @@ def test_workflow_engine_traversal(redis_test_client):
         
     redis_status = asyncio.run(check_redis())
     assert redis_status == "COMPLETED"
+
+    # Verify transition events were published to Pub/Sub
+    # 10 states run. Each run publishes started and completed (or failed). Total = 20 events.
+    assert len(events_received) == 20
+    
+    # Check that events have the correct fields
+    for evt in events_received:
+        assert evt["migration_id"] == migration_id
+        assert "timestamp" in evt
+        assert "stage" in evt
+        assert "status" in evt
+        assert "message" in evt
 
 def test_workflow_engine_constructor_parameters():
     migration_id = "param-migration-id"
@@ -102,10 +135,28 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
             
         engine.state_registry[state_name] = make_wrapper(handler, state_name)
         
-    async def run_engine():
-        return await engine.run()
+    events_received = []
+    
+    async def run_engine_with_pubsub():
+        from app.redis.keys import events_channel
+        import json
         
-    final_state = asyncio.run(run_engine())
+        pubsub = redis_test_client.pubsub()
+        await pubsub.subscribe(events_channel(migration_id))
+        await asyncio.sleep(0.01)
+        
+        final_state = await engine.run()
+        
+        while True:
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
+            if msg is None:
+                break
+            events_received.append(json.loads(msg["data"]))
+            
+        await pubsub.aclose()
+        return final_state
+        
+    final_state = asyncio.run(run_engine_with_pubsub())
     
     expected_order = [
         "QUEUED",
@@ -139,3 +190,15 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
         
     redis_status = asyncio.run(check_redis())
     assert redis_status == "FAILED"
+
+    # Verify transition events were published to Pub/Sub
+    # 15 states run. Each run publishes started and completed (or failed). Total = 30 events.
+    assert len(events_received) == 30
+    
+    # Check fields
+    for evt in events_received:
+        assert evt["migration_id"] == migration_id
+        assert "timestamp" in evt
+        assert "stage" in evt
+        assert "status" in evt
+        assert "message" in evt
