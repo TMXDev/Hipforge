@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
   "project": "HIPForge",
-  "last_updated": "2026-06-30T22:42:00Z",
-  "last_session": "3.1",
+  "last_updated": "2026-06-30T22:54:30Z",
+  "last_session": "3.3",
   "mode": "pre-hackathon",
   "mode_notes": "External APIs (Fireworks AI) and compiler tools (hipify, hipcc) are mocked. Switch mode to 'hackathon' when real services become available.",
 
   "phase": {
-    "current": 3,
-    "current_session": "3.2",
-    "current_session_name": "All API Route Stubs",
+    "current": 4,
+    "current_session": "4.1",
+    "current_session_name": "Connection Pool",
     "status": "in_progress"
   },
 
@@ -19,8 +19,8 @@
     "2.2": {"status": "completed", "gate_passed": true, "notes": "Wrote frontend/Dockerfile and docker-compose.yml. Configured build instructions and container definitions for all four core services with custom command entrypoint fallbacks for unstarted pre-hackathon scripts."},
     "2.3": {"status": "completed", "gate_passed": true, "notes": "Wrote .env.example with all environment variables required by HIPForge, including Redis connection, Fireworks API key placeholder, GPU pinning (HIP_VISIBLE_DEVICES), and pre-hackathon mock toggles."},
     "3.1": {"status": "completed", "gate_passed": true, "notes": "FastAPI application entrypoint initialized with CORS middleware, health API endpoints setup and manually verified via Uvicorn on localhost:8000."},
-    "3.2": {"status": "not_started", "gate_passed": false, "notes": ""},
-    "3.3": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "3.2": {"status": "completed", "gate_passed": true, "notes": "All REST API route stubs implemented and returning HTTP 501 Not Implemented."},
+    "3.3": {"status": "completed", "gate_passed": true, "notes": "Implemented WebSocket connection manager, stream lifecycle handler, and route stub at /ws/v1/migrate/{migration_id}/stream, verified via automated test client."},
     "4.1": {"status": "not_started", "gate_passed": false, "notes": ""},
     "4.2": {"status": "not_started", "gate_passed": false, "notes": ""},
     "4.3": {"status": "not_started", "gate_passed": false, "notes": ""},
@@ -83,5 +83,5 @@
 
   "decisions_made": [],
 
-  "next_action": "Create all API route stubs returning HTTP 501."
+  "next_action": "Implement the Redis connection pool and key helper builders under Session 4.1."
 }
