@@ -57,3 +57,48 @@ def teardown_workspace(migration_id: str) -> None:
     workspace_path = get_workspace_path(migration_id)
     if workspace_path.exists():
         shutil.rmtree(workspace_path)
+
+def write_source_file(migration_id: str, filename: str, content: str) -> str:
+    """
+    Writes content to a file inside the 'input/' subdirectory of the workspace.
+    Returns the absolute path to the written file as a string.
+    """
+    workspace_path = get_workspace_path(migration_id)
+    file_path = workspace_path / "input" / filename
+    
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+        
+    return str(file_path.resolve())
+
+def read_file(migration_id: str, relative_path: str) -> str:
+    """
+    Reads and returns the contents of a file at relative_path (relative to the workspace root).
+    """
+    workspace_path = get_workspace_path(migration_id)
+    file_path = (workspace_path / relative_path).resolve()
+    
+    if not str(file_path).startswith(str(workspace_path.resolve())):
+        raise ValueError("Path traversal attempt detected.")
+        
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found in workspace: {relative_path}")
+        
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def resolve_path(migration_id: str, relative_path: str) -> str:
+    """
+    Resolves the relative path within the workspace and returns the absolute path as a string.
+    Ensures security protection against directory traversal.
+    """
+    workspace_path = get_workspace_path(migration_id).resolve()
+    resolved_path = (workspace_path / relative_path).resolve()
+    
+    if not str(resolved_path).startswith(str(workspace_path)):
+        raise ValueError("Path traversal attempt detected.")
+        
+    return str(resolved_path)
+
