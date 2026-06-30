@@ -1,21 +1,21 @@
 {
   "schema_version": "1.0",
   "project": "HIPForge",
-  "last_updated": "2026-06-30T22:31:00Z",
-  "last_session": "1.1",
+  "last_updated": "2026-06-30T22:34:00Z",
+  "last_session": "2.1",
   "mode": "pre-hackathon",
   "mode_notes": "External APIs (Fireworks AI) and compiler tools (hipify, hipcc) are mocked. Switch mode to 'hackathon' when real services become available.",
 
   "phase": {
     "current": 2,
-    "current_session": "2.1",
-    "current_session_name": "Backend Dockerfile",
+    "current_session": "2.2",
+    "current_session_name": "Frontend Dockerfile",
     "status": "in_progress"
   },
 
   "sessions": {
     "1.1": {"status": "completed", "gate_passed": true, "notes": "Successfully created the complete empty project folder and file layout matching docs/03_PROJECT_STRUCTURE.md exactly."},
-    "2.1": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "2.1": {"status": "completed", "gate_passed": true, "notes": "Wrote backend/Dockerfile with dual-context build support, matching docs/15_DOCKER_SETUP.md spec. Set up backend/requirements.txt with placeholder fastapi and uvicorn dependencies."},
     "2.2": {"status": "not_started", "gate_passed": false, "notes": ""},
     "2.3": {"status": "not_started", "gate_passed": false, "notes": ""},
     "3.1": {"status": "not_started", "gate_passed": false, "notes": ""},
@@ -83,5 +83,5 @@
 
   "decisions_made": [],
 
-  "next_action": "Implement the Dockerfile for the FastAPI backend service."
+  "next_action": "Write the Dockerfile for the Next.js frontend service."
 }
