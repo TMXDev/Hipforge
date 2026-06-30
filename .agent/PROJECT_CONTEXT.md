@@ -1,4 +1,4 @@
-# PROJECT_CONTEXT.md
+# .agent/PROJECT_CONTEXT.md
 
 > **Read this file first at the start of every session.**
 > It gives you enough context to work on HIPForge without reading all 29 specification documents.
@@ -11,14 +11,14 @@
 HIPForge/
 ├── docs/      ← Architecture specs (00–28, 30–31) — READ ONLY during implementation
 └── .agent/    ← AI governance files — read/write every session
-    ├── AGENT_RULES.md
-    ├── SESSION_STATE.json      ← AI memory — updated after every gate
-    ├── PROJECT_CONTEXT.md
-    ├── IMPLEMENTATION_PROMPTS.md
-    ├── IMPLEMENTATION_ORDER.md
-    ├── DEBUGGING_PROMPTS.md
-    ├── MOCK_SERVICES.md
-    └── ARCHITECTURE_LOCK.md
+    ├── .agent/AGENT_RULES.md
+    ├── .agent/SESSION_STATE.json      ← AI memory — updated after every gate
+    ├── .agent/PROJECT_CONTEXT.md
+    ├── .agent/IMPLEMENTATION_PROMPTS.md
+    ├── .agent/IMPLEMENTATION_ORDER.md
+    ├── .agent/DEBUGGING_PROMPTS.md
+    ├── .agent/MOCK_SERVICES.md
+    └── .agent/ARCHITECTURE_LOCK.md
 ```
 
 ---
@@ -110,14 +110,14 @@ QUEUED → PREPARING → HIPIFY → SCA → COMPILING
 → GENERATING_REPORT → COMPLETED  (or FAILED at any point)
 ```
 
-Full state machine: `26_JOB_LIFECYCLE.md`
+Full state machine: `docs/26_JOB_LIFECYCLE.md`
 
 ---
 
 ## Key Design Principles
 
-1. **The architecture is frozen.** See `ARCHITECTURE_LOCK.md`. Do not redesign subsystems.
-2. **Redis keys are centralized.** All keys and channels are in `08_REDIS_ARCHITECTURE.md`. Never invent a key.
+1. **The architecture is frozen.** See `.agent/ARCHITECTURE_LOCK.md`. Do not redesign subsystems.
+2. **Redis keys are centralized.** All keys and channels are in `docs/08_REDIS_ARCHITECTURE.md`. Never invent a key.
 3. **Workers are single-job.** Each Migration Worker handles exactly one job at a time.
 4. **One source of truth.** Code follows specs. If they conflict, stop and report it.
 5. **No placeholders.** Production code must be complete and working.

@@ -1,4 +1,4 @@
-# IMPLEMENTATION_PROMPTS.md
+# .agent/IMPLEMENTATION_PROMPTS.md
 
 > **Your vibe coding playbook.** Copy and paste each prompt exactly as written.
 >
@@ -6,7 +6,7 @@
 > - Complete the **Gate** at the end of each session before moving to the next.
 > - Never skip a Gate. Never run two sessions at once.
 > - Every prompt starts with a planning step. Do not skip it.
-> - After each Gate passes: update `SESSION_STATE.json`, then commit.
+> - After each Gate passes: update `.agent/SESSION_STATE.json`, then commit.
 
 ---
 
@@ -22,7 +22,7 @@ Before doing anything else:
 3. Read .agent/PROJECT_CONTEXT.md
 
 Report back:
-- Current session from SESSION_STATE.json
+- Current session from .agent/SESSION_STATE.json
 - Current mode (pre-hackathon or hackathon)
 - Any blocked items
 - What was completed in the last session
@@ -34,9 +34,9 @@ Then proceed with the session prompt I give you next.
 
 # MANDATORY SESSION END BLOCK
 
-> **Every session ends by updating SESSION_STATE.json.** This is not optional.
+> **Every session ends by updating .agent/SESSION_STATE.json.** This is not optional.
 
-The AI must update the following fields in `SESSION_STATE.json` after every successful gate:
+The AI must update the following fields in `.agent/SESSION_STATE.json` after every successful gate:
 
 ```json
 {
@@ -73,7 +73,7 @@ Mode: pre-hackathon"
 
 > The hackathon has not started. External APIs and cloud services are NOT available yet.
 
-When implementing AI agents or compiler wrappers, read `MOCK_SERVICES.md` first.
+When implementing AI agents or compiler wrappers, read `.agent/MOCK_SERVICES.md` first.
 
 | Service | Status | Environment Variable |
 |---------|--------|---------------------|
@@ -95,7 +95,7 @@ Each prompt below follows this structure:
 3. **Implement** — code is written
 4. **Allowed Files** — exact files the AI may touch
 5. **Definition of Done** — checklist that must be fully satisfied
-6. **STOP + UPDATE SESSION_STATE.json** — hard stop after state update
+6. **STOP + UPDATE .agent/SESSION_STATE.json** — hard stop after state update
 
 ---
 
@@ -106,25 +106,25 @@ Each prompt below follows this structure:
 ## Session 1.1 — Create Project Structure
 
 ```
-Read PROJECT_CONTEXT.md and 03_PROJECT_STRUCTURE.md completely.
+Read .agent/PROJECT_CONTEXT.md and docs/03_PROJECT_STRUCTURE.md completely.
 
 Before writing anything:
 1. List all folders you will create.
 2. List all empty files you will create.
-3. Confirm your plan matches 03_PROJECT_STRUCTURE.md exactly.
+3. Confirm your plan matches docs/03_PROJECT_STRUCTURE.md exactly.
 Then execute.
 
 Your task:
-Create the entire HIPForge repository folder and file layout on disk exactly as described in 03_PROJECT_STRUCTURE.md. All files must be empty — no content, no imports, no logic.
+Create the entire HIPForge repository folder and file layout on disk exactly as described in docs/03_PROJECT_STRUCTURE.md. All files must be empty — no content, no imports, no logic.
 
 Allowed Files:
-Create only the folders and empty files listed in 03_PROJECT_STRUCTURE.md.
+Create only the folders and empty files listed in docs/03_PROJECT_STRUCTURE.md.
 Do not create any file not listed there.
 Do not modify any existing file.
 
 Definition of Done:
-[ ] Every folder from 03_PROJECT_STRUCTURE.md exists on disk.
-[ ] Every file from 03_PROJECT_STRUCTURE.md exists on disk (empty).
+[ ] Every folder from docs/03_PROJECT_STRUCTURE.md exists on disk.
+[ ] Every file from docs/03_PROJECT_STRUCTURE.md exists on disk (empty).
 [ ] No extra files or folders were created.
 [ ] No file contains any content.
 
@@ -133,7 +133,7 @@ Do not write any code.
 Wait for the next implementation prompt.
 ```
 
-**Gate**: Run `Get-ChildItem -Recurse | Select-Object FullName` and compare against `03_PROJECT_STRUCTURE.md`. ✓ / ✗
+**Gate**: Run `Get-ChildItem -Recurse | Select-Object FullName` and compare against `docs/03_PROJECT_STRUCTURE.md`. ✓ / ✗
 
 ---
 
@@ -144,7 +144,7 @@ Wait for the next implementation prompt.
 ## Session 2.1 — Backend Dockerfile
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 15_DOCKER_SETUP.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/15_DOCKER_SETUP.md.
 
 Before writing anything:
 1. Identify the base image to use.
@@ -163,7 +163,7 @@ Do not write any other file.
 
 Definition of Done:
 [ ] backend/Dockerfile exists and is complete.
-[ ] Base image matches 15_DOCKER_SETUP.md.
+[ ] Base image matches docs/15_DOCKER_SETUP.md.
 [ ] requirements.txt is installed correctly.
 [ ] Entrypoint, working directory, and port match the spec.
 [ ] docker build -f backend/Dockerfile . completes with no errors.
@@ -180,7 +180,7 @@ Wait for the next implementation prompt.
 ## Session 2.2 — Frontend Dockerfile + docker-compose.yml
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 15_DOCKER_SETUP.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/15_DOCKER_SETUP.md.
 
 Before writing anything:
 1. Identify the Node.js version and base image for the frontend.
@@ -200,8 +200,8 @@ Do not touch backend/Dockerfile.
 Definition of Done:
 [ ] frontend/Dockerfile exists and builds successfully.
 [ ] docker-compose.yml defines: backend, frontend, redis, migration-worker.
-[ ] Volume mounts match 15_DOCKER_SETUP.md.
-[ ] Port mappings match 15_DOCKER_SETUP.md.
+[ ] Volume mounts match docs/15_DOCKER_SETUP.md.
+[ ] Port mappings match docs/15_DOCKER_SETUP.md.
 [ ] migration-worker service supports scale-out (no hardcoded replica count).
 [ ] docker-compose up -d starts all services without errors.
 [ ] docker-compose ps shows all services healthy.
@@ -219,10 +219,10 @@ Wait for the next implementation prompt.
 ## Session 2.3 — Environment Configuration
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 15_DOCKER_SETUP.md, and 04_TECHNOLOGY_DECISIONS.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/15_DOCKER_SETUP.md, and docs/04_TECHNOLOGY_DECISIONS.md.
 
 Before writing anything:
-1. List every environment variable referenced across 15_DOCKER_SETUP.md and 04_TECHNOLOGY_DECISIONS.md.
+1. List every environment variable referenced across docs/15_DOCKER_SETUP.md and docs/04_TECHNOLOGY_DECISIONS.md.
 2. Group them by service: backend, worker, frontend, Redis, GPU.
 Then implement.
 
@@ -236,7 +236,7 @@ Do not modify any other file.
 
 Definition of Done:
 [ ] .env.example exists.
-[ ] Every variable referenced in 15_DOCKER_SETUP.md is present.
+[ ] Every variable referenced in docs/15_DOCKER_SETUP.md is present.
 [ ] FIREWORKS_API_KEY is present.
 [ ] Redis connection variables are present.
 [ ] HIP_VISIBLE_DEVICES is present for GPU pinning.
@@ -259,10 +259,10 @@ Wait for the next implementation prompt.
 ## Session 3.1 — FastAPI App Entrypoint
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 13_BACKEND.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/13_BACKEND.md.
 
 Before writing anything:
-1. Identify the app title, description, and version from 13_BACKEND.md.
+1. Identify the app title, description, and version from docs/13_BACKEND.md.
 2. Identify the CORS configuration required.
 3. List the router modules you will import (they may be empty for now).
 Then implement.
@@ -279,7 +279,7 @@ Do not implement any other route or logic.
 
 Definition of Done:
 [ ] backend/app/main.py exists with the FastAPI app initialized.
-[ ] App title, description, and version match 13_BACKEND.md.
+[ ] App title, description, and version match docs/13_BACKEND.md.
 [ ] CORS middleware is configured for the frontend origin.
 [ ] GET /health returns {"status": "ok"} with HTTP 200.
 [ ] uvicorn backend.app.main:app starts without errors.
@@ -297,10 +297,10 @@ Wait for the next implementation prompt.
 ## Session 3.2 — All API Route Stubs
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 16_API_SPECIFICATION.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/16_API_SPECIFICATION.md.
 
 Before writing anything:
-1. List every endpoint defined in 16_API_SPECIFICATION.md with its method and path.
+1. List every endpoint defined in docs/16_API_SPECIFICATION.md with its method and path.
 2. Confirm you have accounted for all of them.
 Then implement.
 
@@ -317,9 +317,9 @@ Allowed Files:
 Do not implement any business logic. Do not write any service or model files yet.
 
 Definition of Done:
-[ ] Every endpoint from 16_API_SPECIFICATION.md exists as a stub.
+[ ] Every endpoint from docs/16_API_SPECIFICATION.md exists as a stub.
 [ ] Every stub returns HTTP 501 with body {"detail": "not implemented"}.
-[ ] URL paths, HTTP methods, and parameter names exactly match 16_API_SPECIFICATION.md.
+[ ] URL paths, HTTP methods, and parameter names exactly match docs/16_API_SPECIFICATION.md.
 [ ] No 404 responses for any documented endpoint.
 [ ] Backend starts cleanly with no errors.
 
@@ -328,17 +328,17 @@ Do not implement any endpoint logic.
 Wait for the next implementation prompt.
 ```
 
-**Gate**: Every route in `16_API_SPECIFICATION.md` returns 501. Zero 404s for documented routes. ✓ / ✗
+**Gate**: Every route in `docs/16_API_SPECIFICATION.md` returns 501. Zero 404s for documented routes. ✓ / ✗
 
 ---
 
 ## Session 3.3 — WebSocket Stub
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 16_API_SPECIFICATION.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/16_API_SPECIFICATION.md.
 
 Before writing anything:
-1. Identify the exact WebSocket path from 16_API_SPECIFICATION.md.
+1. Identify the exact WebSocket path from docs/16_API_SPECIFICATION.md.
 2. Identify what the initial connection message should contain.
 Then implement.
 
@@ -353,7 +353,7 @@ Allowed Files:
 Do not implement any Pub/Sub relay logic yet.
 
 Definition of Done:
-[ ] WebSocket endpoint exists at the path defined in 16_API_SPECIFICATION.md.
+[ ] WebSocket endpoint exists at the path defined in docs/16_API_SPECIFICATION.md.
 [ ] Connecting receives: {"type": "connected", "migration_id": "<id>"}.
 [ ] Connection closes gracefully when the client disconnects.
 [ ] Backend starts cleanly with no errors.
@@ -374,10 +374,10 @@ Wait for the next implementation prompt.
 ## Session 4.1 — Redis Connection + Key Builders
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 08_REDIS_ARCHITECTURE.md completely.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/08_REDIS_ARCHITECTURE.md completely.
 
 Before writing anything:
-1. List every Redis key template defined in 08_REDIS_ARCHITECTURE.md.
+1. List every Redis key template defined in docs/08_REDIS_ARCHITECTURE.md.
 2. List every Pub/Sub channel template.
 3. Confirm you will create a builder function for every single one.
 Then implement.
@@ -393,9 +393,9 @@ No other file may contain raw Redis key strings. All keys must come from keys.py
 
 Definition of Done:
 [ ] backend/app/redis/client.py initializes a connection pool from REDIS_URL env variable.
-[ ] backend/app/redis/keys.py has one function per key template in 08_REDIS_ARCHITECTURE.md.
+[ ] backend/app/redis/keys.py has one function per key template in docs/08_REDIS_ARCHITECTURE.md.
 [ ] Every function takes migration_id as a parameter and returns the full key string.
-[ ] Key strings exactly match the patterns in 08_REDIS_ARCHITECTURE.md.
+[ ] Key strings exactly match the patterns in docs/08_REDIS_ARCHITECTURE.md.
 [ ] No raw key strings exist outside keys.py.
 [ ] Import from this module works without errors.
 
@@ -404,14 +404,14 @@ Do not implement queue or Pub/Sub operations yet.
 Wait for the next implementation prompt.
 ```
 
-**Gate**: `from backend.app.redis.keys import *` works. Every key in `08_REDIS_ARCHITECTURE.md` has a builder. ✓ / ✗
+**Gate**: `from backend.app.redis.keys import *` works. Every key in `docs/08_REDIS_ARCHITECTURE.md` has a builder. ✓ / ✗
 
 ---
 
 ## Session 4.2 — Queue Operations
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 08_REDIS_ARCHITECTURE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/08_REDIS_ARCHITECTURE.md.
 
 Before writing anything:
 1. Identify the four queue operations needed: enqueue, dequeue, mark_active, mark_done.
@@ -445,11 +445,11 @@ Wait for the next implementation prompt.
 ## Session 4.3 — Pub/Sub Helpers
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 08_REDIS_ARCHITECTURE.md, and 26_JOB_LIFECYCLE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/08_REDIS_ARCHITECTURE.md, and docs/26_JOB_LIFECYCLE.md.
 
 Before writing anything:
-1. Identify the Pub/Sub channel naming pattern from 08_REDIS_ARCHITECTURE.md.
-2. Identify the event payload fields from 26_JOB_LIFECYCLE.md.
+1. Identify the Pub/Sub channel naming pattern from docs/08_REDIS_ARCHITECTURE.md.
+2. Identify the event payload fields from docs/26_JOB_LIFECYCLE.md.
 Then implement.
 
 Your task:
@@ -477,7 +477,7 @@ Wait for the next implementation prompt.
 ## Session 4.4 — Redis Manager Tests
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 08_REDIS_ARCHITECTURE.md, and 20_TESTING.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/08_REDIS_ARCHITECTURE.md, and docs/20_TESTING.md.
 
 Before writing anything:
 1. List the test cases you will write (one sentence each).
@@ -515,7 +515,7 @@ Wait for the next implementation prompt.
 ## Session 5.1 — Workspace Creation and Layout
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 06_WORKSPACE_ARCHITECTURE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/06_WORKSPACE_ARCHITECTURE.md.
 
 Before writing anything:
 1. List every subdirectory that must be created inside a migration workspace.
@@ -529,7 +529,7 @@ Allowed Files:
 - backend/app/workspace/manager.py
 
 Definition of Done:
-[ ] create_workspace(migration_id) creates the exact directory tree from 06_WORKSPACE_ARCHITECTURE.md.
+[ ] create_workspace(migration_id) creates the exact directory tree from docs/06_WORKSPACE_ARCHITECTURE.md.
 [ ] Workspace root path comes from an environment variable, not hardcoded.
 [ ] teardown_workspace(migration_id) removes the workspace directory completely.
 [ ] No errors if teardown is called on a non-existent workspace.
@@ -539,14 +539,14 @@ Do not implement file helpers yet.
 Wait for the next implementation prompt.
 ```
 
-**Gate**: `create_workspace("test-id")` — directory tree matches `06_WORKSPACE_ARCHITECTURE.md`. ✓ / ✗
+**Gate**: `create_workspace("test-id")` — directory tree matches `docs/06_WORKSPACE_ARCHITECTURE.md`. ✓ / ✗
 
 ---
 
 ## Session 5.2 — File Helpers + Tests
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 06_WORKSPACE_ARCHITECTURE.md, and 20_TESTING.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/06_WORKSPACE_ARCHITECTURE.md, and docs/20_TESTING.md.
 
 Before writing anything:
 1. List the three helper functions you will implement.
@@ -583,7 +583,7 @@ Wait for the next implementation prompt.
 ## Session 6.1 — State Machine Base Class
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 07_WORKFLOW_ENGINE.md, and 26_JOB_LIFECYCLE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/07_WORKFLOW_ENGINE.md, and docs/26_JOB_LIFECYCLE.md.
 
 Before writing anything:
 1. List all 10 state names in order.
@@ -618,7 +618,7 @@ Wait for the next implementation prompt.
 ## Session 6.2 — Retry Logic and Failure Handling
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 07_WORKFLOW_ENGINE.md, and 26_JOB_LIFECYCLE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/07_WORKFLOW_ENGINE.md, and docs/26_JOB_LIFECYCLE.md.
 
 Before writing anything:
 1. Identify which states support retries and their retry limits.
@@ -652,11 +652,11 @@ Wait for the next implementation prompt.
 ## Session 6.3 — Redis Event Emission
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 07_WORKFLOW_ENGINE.md, 08_REDIS_ARCHITECTURE.md, and 26_JOB_LIFECYCLE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/07_WORKFLOW_ENGINE.md, docs/08_REDIS_ARCHITECTURE.md, and docs/26_JOB_LIFECYCLE.md.
 
 Before writing anything:
 1. Identify exactly when events must be emitted: before entering, after completing, on failure.
-2. Confirm the event payload fields from 26_JOB_LIFECYCLE.md.
+2. Confirm the event payload fields from docs/26_JOB_LIFECYCLE.md.
 Then implement.
 
 Your task:
@@ -686,7 +686,7 @@ Wait for the next implementation prompt.
 ## Session 6.4 — Workflow Engine Tests
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 07_WORKFLOW_ENGINE.md, and 20_TESTING.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/07_WORKFLOW_ENGINE.md, and docs/20_TESTING.md.
 
 Before writing anything:
 1. List every test case you will write.
@@ -721,7 +721,7 @@ Wait for the next implementation prompt.
 ## Session 7.1 — Worker Entrypoint and Consumer Loop
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 24_SCALABILITY.md, and 08_REDIS_ARCHITECTURE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/24_SCALABILITY.md, and docs/08_REDIS_ARCHITECTURE.md.
 
 Before writing anything:
 1. Describe the single-job execution guarantee.
@@ -755,7 +755,7 @@ Wait for the next implementation prompt.
 ## Session 7.2 — Worker Integration Test
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 24_SCALABILITY.md, and 20_TESTING.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/24_SCALABILITY.md, and docs/20_TESTING.md.
 
 Before writing anything:
 1. Describe how you will start the worker in the test.
@@ -791,7 +791,7 @@ Wait for the next implementation prompt.
 ## Session 8.1 — hipify-clang Wrapper
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 10_COMPILATION_PIPELINE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/10_COMPILATION_PIPELINE.md.
 
 Before writing anything:
 1. Identify the subprocess command from the spec.
@@ -825,10 +825,10 @@ Wait for the next implementation prompt.
 ## Session 8.2 — hipcc Wrapper + Error Parser
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 10_COMPILATION_PIPELINE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/10_COMPILATION_PIPELINE.md.
 
 Before writing anything:
-1. Identify the CompilerError schema from 10_COMPILATION_PIPELINE.md.
+1. Identify the CompilerError schema from docs/10_COMPILATION_PIPELINE.md.
 2. Identify the subprocess command for hipcc.
 3. Describe your error parsing approach.
 Then implement.
@@ -862,10 +862,10 @@ Wait for the next implementation prompt.
 ## Session 8.3 — Semantic Compatibility Analyzer
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 10_COMPILATION_PIPELINE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/10_COMPILATION_PIPELINE.md.
 
 Before writing anything:
-1. Identify the CompatibilityIssue schema from 10_COMPILATION_PIPELINE.md.
+1. Identify the CompatibilityIssue schema from docs/10_COMPILATION_PIPELINE.md.
 2. List the patterns the SCA must detect.
 Then implement.
 
@@ -878,9 +878,9 @@ Allowed Files:
 - tests/backend/test_sca.py
 
 Definition of Done:
-[ ] analyze(source_path) scans HIP source for patterns in 10_COMPILATION_PIPELINE.md.
+[ ] analyze(source_path) scans HIP source for patterns in docs/10_COMPILATION_PIPELINE.md.
 [ ] Returns: {"issues": list[CompatibilityIssue], "score": float}.
-[ ] CompatibilityIssue schema exactly matches 10_COMPILATION_PIPELINE.md.
+[ ] CompatibilityIssue schema exactly matches docs/10_COMPILATION_PIPELINE.md.
 [ ] Unit test uses a fixture with at least 2 known issues.
 [ ] Tests pass. Known issues correctly identified.
 
@@ -896,7 +896,7 @@ Wait for the next implementation prompt.
 ## Session 8.4 — Wire Pipeline into Workflow States
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 07_WORKFLOW_ENGINE.md, 10_COMPILATION_PIPELINE.md, and 26_JOB_LIFECYCLE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/07_WORKFLOW_ENGINE.md, docs/10_COMPILATION_PIPELINE.md, and docs/26_JOB_LIFECYCLE.md.
 
 Before writing anything:
 1. Identify which state handlers will be replaced: HIPIFY, SCA, COMPILING.
@@ -935,11 +935,11 @@ Wait for the next implementation prompt.
 ## Session 9.1 — Fireworks AI Client
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 09_AI_AGENTS.md, and 04_TECHNOLOGY_DECISIONS.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/09_AI_AGENTS.md, and docs/04_TECHNOLOGY_DECISIONS.md.
 
 Before writing anything:
 1. Identify the Fireworks AI authentication method.
-2. Identify the retry/backoff behavior from 09_AI_AGENTS.md.
+2. Identify the retry/backoff behavior from docs/09_AI_AGENTS.md.
 Then implement.
 
 Your task:
@@ -951,7 +951,7 @@ Allowed Files:
 Definition of Done:
 [ ] Client authenticates using FIREWORKS_API_KEY from environment.
 [ ] chat_completion(model, messages, max_tokens) method works end to end.
-[ ] Rate limit errors trigger exponential backoff per 09_AI_AGENTS.md.
+[ ] Rate limit errors trigger exponential backoff per docs/09_AI_AGENTS.md.
 [ ] Test makes a real API call and returns a valid completion.
 [ ] Test passes.
 
@@ -967,7 +967,7 @@ Wait for the next implementation prompt.
 ## Session 9.2 — Analysis Agent
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 09_AI_AGENTS.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/09_AI_AGENTS.md.
 
 Before writing anything:
 1. Identify the Analysis Agent's input contract.
@@ -983,7 +983,7 @@ Allowed Files:
 - backend/app/workflow_engine/states.py (ANALYZING handler only)
 
 Definition of Done:
-[ ] analyze(compiler_errors, source_code) uses exact prompt template from 09_AI_AGENTS.md.
+[ ] analyze(compiler_errors, source_code) uses exact prompt template from docs/09_AI_AGENTS.md.
 [ ] Returns: {"analysis": str, "root_cause": str, "suggested_fix": str}.
 [ ] ANALYZING state calls agent and stores result in context.
 [ ] Test with a real compiler error returns a structured diagnosis.
@@ -1001,7 +1001,7 @@ Wait for the next implementation prompt.
 ## Session 9.3 — Patch Agent
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 09_AI_AGENTS.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/09_AI_AGENTS.md.
 
 Before writing anything:
 1. Confirm the output is a full corrected file, not a diff.
@@ -1016,7 +1016,7 @@ Allowed Files:
 - backend/app/workflow_engine/states.py (PATCHING handler only)
 
 Definition of Done:
-[ ] patch(source_code, analysis, compiler_errors) uses exact prompt template from 09_AI_AGENTS.md.
+[ ] patch(source_code, analysis, compiler_errors) uses exact prompt template from docs/09_AI_AGENTS.md.
 [ ] Returns the full corrected source file as a string.
 [ ] PATCHING state calls agent and writes patched source to workspace.
 [ ] Test: patched file no longer contains the targeted error.
@@ -1034,7 +1034,7 @@ Wait for the next implementation prompt.
 ## Session 9.4 — Research Agent
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 11_RESEARCH_AGENT.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/11_RESEARCH_AGENT.md.
 
 Before writing anything:
 1. Identify the Research Agent's query input and context output format.
@@ -1050,7 +1050,7 @@ Allowed Files:
 - backend/app/workflow_engine/context.py (add research_context field if needed)
 
 Definition of Done:
-[ ] research(query) follows behavior defined in 11_RESEARCH_AGENT.md.
+[ ] research(query) follows behavior defined in docs/11_RESEARCH_AGENT.md.
 [ ] Returns relevant HIP/ROCm documentation context as a string.
 [ ] RESEARCHING state stores result in context for next ANALYZING cycle.
 [ ] Test with a known HIP error query returns relevant context.
@@ -1068,7 +1068,7 @@ Wait for the next implementation prompt.
 ## Session 9.5 — Full AI Repair Loop Integration Test
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 07_WORKFLOW_ENGINE.md, 09_AI_AGENTS.md, and 20_TESTING.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/07_WORKFLOW_ENGINE.md, docs/09_AI_AGENTS.md, and docs/20_TESTING.md.
 
 Before writing anything:
 1. Describe the exact scenario: what CUDA file, what errors, what the loop should do.
@@ -1102,10 +1102,10 @@ Wait for the next implementation prompt.
 ## Session 10.1 — Journal Write, Read, and API Endpoint
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 12_MIGRATION_JOURNAL.md, 08_REDIS_ARCHITECTURE.md, and 16_API_SPECIFICATION.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/12_MIGRATION_JOURNAL.md, docs/08_REDIS_ARCHITECTURE.md, and docs/16_API_SPECIFICATION.md.
 
 Before writing anything:
-1. Identify the journal entry schema from 12_MIGRATION_JOURNAL.md.
+1. Identify the journal entry schema from docs/12_MIGRATION_JOURNAL.md.
 2. Identify persistence targets (Redis + filesystem).
 3. Identify the API endpoint path.
 Then implement.
@@ -1122,7 +1122,7 @@ Allowed Files:
 Definition of Done:
 [ ] append_journal_entry(migration_id, entry) writes to Redis AND workspace filesystem.
 [ ] get_journal(migration_id) returns all entries as a list.
-[ ] Journal entry schema exactly matches 12_MIGRATION_JOURNAL.md.
+[ ] Journal entry schema exactly matches docs/12_MIGRATION_JOURNAL.md.
 [ ] A journal entry is written after every state transition.
 [ ] GET /migrate/{id}/journal returns the full journal JSON.
 [ ] Returns 404 if migration does not exist.
@@ -1143,11 +1143,11 @@ Wait for the next implementation prompt.
 ## Session 11.1 — All Four Report Formats
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 17_REPORT_GENERATOR.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/17_REPORT_GENERATOR.md.
 
 Before writing anything:
 1. List the four report artifacts that must be produced.
-2. List the fields required in each from 17_REPORT_GENERATOR.md.
+2. List the fields required in each from docs/17_REPORT_GENERATOR.md.
 Then implement.
 
 Your task:
@@ -1163,7 +1163,7 @@ Definition of Done:
 [ ] generate_json_report(migration_id, context) produces a .json in the workspace.
 [ ] generate_git_patch(migration_id) produces a .patch diff of original vs translated.
 [ ] build_zip(migration_id) packages all three into a .zip.
-[ ] All fields required by 17_REPORT_GENERATOR.md are present.
+[ ] All fields required by docs/17_REPORT_GENERATOR.md are present.
 [ ] GENERATING_REPORT state calls all four in order.
 [ ] Tests verify all four files exist with required fields.
 [ ] pytest passes.
@@ -1180,7 +1180,7 @@ Wait for the next implementation prompt.
 ## Session 11.2 — Download Endpoint
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 16_API_SPECIFICATION.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/16_API_SPECIFICATION.md.
 
 Before writing anything:
 1. Identify the endpoint path, method, and response headers.
@@ -1214,7 +1214,7 @@ Wait for the next implementation prompt.
 ## Session 12.1 — Job Submission Endpoint (Full)
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 16_API_SPECIFICATION.md, 08_REDIS_ARCHITECTURE.md, and 06_WORKSPACE_ARCHITECTURE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/16_API_SPECIFICATION.md, docs/08_REDIS_ARCHITECTURE.md, and docs/06_WORKSPACE_ARCHITECTURE.md.
 
 Before writing anything:
 1. List every step POST /migrate must perform in order.
@@ -1230,7 +1230,7 @@ Allowed Files:
 - backend/app/schemas/ (add request/response Pydantic models if missing)
 
 Definition of Done:
-[ ] Accepts file upload per 16_API_SPECIFICATION.md.
+[ ] Accepts file upload per docs/16_API_SPECIFICATION.md.
 [ ] Generates a UUID migration_id.
 [ ] Creates workspace via Workspace Manager.
 [ ] Writes uploaded source to workspace.
@@ -1252,7 +1252,7 @@ Wait for the next implementation prompt.
 ## Session 12.2 — Status Endpoint + WebSocket Relay (Full)
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 16_API_SPECIFICATION.md, and 08_REDIS_ARCHITECTURE.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/16_API_SPECIFICATION.md, and docs/08_REDIS_ARCHITECTURE.md.
 
 Before writing anything:
 1. Identify the fields GET /migrate/{id} must return.
@@ -1291,7 +1291,7 @@ Wait for the next implementation prompt.
 ## Session 13.1 — Upload Page + Job Submission
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 14_FRONTEND.md, and 16_API_SPECIFICATION.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/14_FRONTEND.md, and docs/16_API_SPECIFICATION.md.
 
 Before writing anything:
 1. Describe the upload page layout and components.
@@ -1302,7 +1302,7 @@ Your task:
 Implement the upload page and job submission flow.
 
 Allowed Files:
-- frontend/app/page.tsx (or upload page route per 03_PROJECT_STRUCTURE.md)
+- frontend/app/page.tsx (or upload page route per docs/03_PROJECT_STRUCTURE.md)
 - frontend/components/UploadCard/ (upload zone component)
 - frontend/services/api.ts (add submit function)
 - frontend/types/migration.ts (add MigrationResponse type)
@@ -1328,7 +1328,7 @@ Wait for the next implementation prompt.
 ## Session 13.2 — Live Progress Timeline
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 14_FRONTEND.md, 26_JOB_LIFECYCLE.md, and 16_API_SPECIFICATION.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/14_FRONTEND.md, docs/26_JOB_LIFECYCLE.md, and docs/16_API_SPECIFICATION.md.
 
 Before writing anything:
 1. List all 10 states and their display order.
@@ -1364,7 +1364,7 @@ Wait for the next implementation prompt.
 ## Session 13.3 — Log Stream, Journal Viewer, Report Viewer, Download
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 14_FRONTEND.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/14_FRONTEND.md.
 
 Before writing anything:
 1. List the four panels and their data sources.
@@ -1403,7 +1403,7 @@ Wait for the next implementation prompt.
 ## Session 14.1 — End-to-End Test
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, 20_TESTING.md, and 31_DEMO_SCRIPT.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, docs/20_TESTING.md, and docs/31_DEMO_SCRIPT.md.
 
 Before writing anything:
 1. Describe the full E2E scenario step by step.
@@ -1436,14 +1436,14 @@ Wait for the next implementation prompt.
 ## Session 14.2 — Security Hardening
 
 ```
-Read PROJECT_CONTEXT.md, AGENT_RULES.md, and 19_SECURITY.md.
+Read .agent/PROJECT_CONTEXT.md, .agent/AGENT_RULES.md, and docs/19_SECURITY.md.
 
 Before writing anything:
-1. List the security requirements from 19_SECURITY.md not yet implemented.
+1. List the security requirements from docs/19_SECURITY.md not yet implemented.
 Then implement each one.
 
 Your task:
-Apply security hardening per 19_SECURITY.md.
+Apply security hardening per docs/19_SECURITY.md.
 
 Allowed Files:
 - backend/app/main.py (middleware additions only)
@@ -1452,7 +1452,7 @@ Allowed Files:
 - docker-compose.yml (environment variable security only)
 
 Definition of Done:
-[ ] Every security requirement in 19_SECURITY.md is satisfied.
+[ ] Every security requirement in docs/19_SECURITY.md is satisfied.
 [ ] No new endpoints introduced.
 [ ] No existing functionality broken.
 [ ] Backend starts cleanly. E2E test still passes.
@@ -1468,7 +1468,7 @@ Wait for the next implementation prompt.
 ## Session 14.3 — Demo Dry Run
 
 ```
-Read this file only: 31_DEMO_SCRIPT.md
+Read this file only: docs/31_DEMO_SCRIPT.md
 
 Check every item in the preparation checklist.
 
@@ -1495,5 +1495,5 @@ STOP.
 
 > **You've shipped HIPForge.**
 >
-> Update `30_IMPLEMENTATION_TRACKER.md` with ✅ for every completed component.
+> Update `docs/30_IMPLEMENTATION_TRACKER.md` with ✅ for every completed component.
 > You're ready to present.

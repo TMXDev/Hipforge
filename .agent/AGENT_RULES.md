@@ -1,7 +1,7 @@
-# AGENT_RULES.md
+# .agent/AGENT_RULES.md
 
 > **Read this file at the start of every coding session before writing any code.**
-> Then read SESSION_STATE.json to understand exactly where you are.
+> Then read .agent/SESSION_STATE.json to understand exactly where you are.
 
 ---
 
@@ -18,13 +18,13 @@ The architecture is designed. Your job is to build it — not redesign it.
 ## Rule 0 — Session State (Read First, Write Last)
 
 **At the start of every session:**
-1. Read `SESSION_STATE.json`.
+1. Read `.agent/SESSION_STATE.json`.
 2. Confirm the current session matches what you were asked to implement.
 3. Check `mode` — if `"pre-hackathon"`, follow Rule 13 (mock services).
 4. Check `blocked_items` — if anything is blocked that affects this session, report it before coding.
 
 **At the end of every session (before stopping):**
-Update `SESSION_STATE.json` with:
+Update `.agent/SESSION_STATE.json` with:
 - `last_updated`: current ISO timestamp
 - `last_session`: the session ID you just completed (e.g. `"3.1"`)
 - `phase.current_session`: the **next** session ID
@@ -33,13 +33,13 @@ Update `SESSION_STATE.json` with:
 - `next_action`: one sentence describing what the next session will do
 - Any notes about decisions made or issues found in `sessions["X.Y"]["notes"]`
 
-Do NOT update `SESSION_STATE.json` if the gate did not pass. Only update on success.
+Do NOT update `.agent/SESSION_STATE.json` if the gate did not pass. Only update on success.
 
 ---
 
 ## Rule 1 — Architecture Is Frozen
 
-The HIPForge architecture is locked. See `ARCHITECTURE_LOCK.md`.
+The HIPForge architecture is locked. See `.agent/ARCHITECTURE_LOCK.md`.
 
 - Do NOT redesign any subsystem.
 - Do NOT suggest alternative patterns or frameworks.
@@ -57,23 +57,23 @@ The specification is the source of truth. Code must match it exactly.
 
 | Working on              | Read first                                                |
 | ----------------------- | --------------------------------------------------------- |
-| Workflow Engine         | `07_WORKFLOW_ENGINE.md`, `26_JOB_LIFECYCLE.md`            |
-| Migration Worker        | `24_SCALABILITY.md`, `08_REDIS_ARCHITECTURE.md`           |
-| Redis Manager           | `08_REDIS_ARCHITECTURE.md`                                |
-| Backend API             | `13_BACKEND.md`, `16_API_SPECIFICATION.md`                |
-| Workspace Manager       | `06_WORKSPACE_ARCHITECTURE.md`                            |
-| Compilation Pipeline    | `10_COMPILATION_PIPELINE.md`                              |
-| AI Agents               | `09_AI_AGENTS.md`, `11_RESEARCH_AGENT.md`                 |
-| Migration Journal       | `12_MIGRATION_JOURNAL.md`                                 |
-| Report Generator        | `17_REPORT_GENERATOR.md`                                  |
-| Frontend                | `14_FRONTEND.md`, `16_API_SPECIFICATION.md`, `26_JOB_LIFECYCLE.md` |
-| Docker / Infrastructure | `15_DOCKER_SETUP.md`, `03_PROJECT_STRUCTURE.md`           |
+| Workflow Engine         | `docs/07_WORKFLOW_ENGINE.md`, `docs/26_JOB_LIFECYCLE.md`            |
+| Migration Worker        | `docs/24_SCALABILITY.md`, `docs/08_REDIS_ARCHITECTURE.md`           |
+| Redis Manager           | `docs/08_REDIS_ARCHITECTURE.md`                                |
+| Backend API             | `docs/13_BACKEND.md`, `docs/16_API_SPECIFICATION.md`                |
+| Workspace Manager       | `docs/06_WORKSPACE_ARCHITECTURE.md`                            |
+| Compilation Pipeline    | `docs/10_COMPILATION_PIPELINE.md`                              |
+| AI Agents               | `docs/09_AI_AGENTS.md`, `docs/11_RESEARCH_AGENT.md`                 |
+| Migration Journal       | `docs/12_MIGRATION_JOURNAL.md`                                 |
+| Report Generator        | `docs/17_REPORT_GENERATOR.md`                                  |
+| Frontend                | `docs/14_FRONTEND.md`, `docs/16_API_SPECIFICATION.md`, `docs/26_JOB_LIFECYCLE.md` |
+| Docker / Infrastructure | `docs/15_DOCKER_SETUP.md`, `docs/03_PROJECT_STRUCTURE.md`           |
 
 ---
 
 ## Rule 3 — Never Invent APIs
 
-Only implement API endpoints that are explicitly defined in `16_API_SPECIFICATION.md`.
+Only implement API endpoints that are explicitly defined in `docs/16_API_SPECIFICATION.md`.
 
 If a required endpoint is missing from the spec:
 
@@ -83,7 +83,7 @@ If a required endpoint is missing from the spec:
 
 ## Rule 4 — Never Invent Redis Keys
 
-Only use Redis keys and channel names that are defined in `08_REDIS_ARCHITECTURE.md`.
+Only use Redis keys and channel names that are defined in `docs/08_REDIS_ARCHITECTURE.md`.
 
 No exceptions.
 
@@ -91,7 +91,7 @@ No exceptions.
 
 ## Rule 5 — Never Change the Project Structure
 
-The folder and file layout is defined in `03_PROJECT_STRUCTURE.md`.
+The folder and file layout is defined in `docs/03_PROJECT_STRUCTURE.md`.
 
 - Do NOT rename files.
 - Do NOT rename folders.
@@ -187,13 +187,13 @@ If a specification needs to be updated based on an implementation finding:
 
 ## Rule 13 — Pre-Hackathon Mock Mode
 
-Check `SESSION_STATE.json` → `mode` field before implementing any external service.
+Check `.agent/SESSION_STATE.json` → `mode` field before implementing any external service.
 
 **If mode is `"pre-hackathon"`:**
 
-- Read `MOCK_SERVICES.md` completely before implementing any AI agent or compiler wrapper.
+- Read `.agent/MOCK_SERVICES.md` completely before implementing any AI agent or compiler wrapper.
 - Build the **mock client first**, then the real client stub alongside it.
-- Every external service must be injected via factory function (defined in `MOCK_SERVICES.md`).
+- Every external service must be injected via factory function (defined in `.agent/MOCK_SERVICES.md`).
 - Use `USE_MOCK_AI` and `USE_MOCK_COMPILER` environment variables — never hardcode mock behavior.
 - Never call the real Fireworks AI API. Never call `hipify-clang` or `hipcc` directly — use the factory.
 - The mock and real implementations must share the exact same function signatures and return schemas.
@@ -201,7 +201,7 @@ Check `SESSION_STATE.json` → `mode` field before implementing any external ser
 **If mode is `"hackathon"`:**
 
 - Real APIs are available. Use real clients.
-- Follow the Hackathon Swap Checklist in `MOCK_SERVICES.md` before touching any service.
+- Follow the Hackathon Swap Checklist in `.agent/MOCK_SERVICES.md` before touching any service.
 
 ---
 

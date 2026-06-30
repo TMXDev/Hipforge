@@ -1,4 +1,4 @@
-# DEBUGGING_PROMPTS.md
+# .agent/DEBUGGING_PROMPTS.md
 
 > **Your bug-fixing playbook.** When something breaks, find the right section, copy the prompt, paste it in.
 >
@@ -12,8 +12,8 @@
 
 ```
 Read these files before doing anything:
-- PROJECT_CONTEXT.md
-- AGENT_RULES.md
+- .agent/PROJECT_CONTEXT.md
+- .agent/AGENT_RULES.md
 
 You are debugging HIPForge.
 
@@ -52,7 +52,7 @@ Error:
 
 Before fixing:
 1. Identify the exact missing module or circular import.
-2. Check whether the import path matches 03_PROJECT_STRUCTURE.md.
+2. Check whether the import path matches docs/03_PROJECT_STRUCTURE.md.
 3. Do not move files — fix the import path.
 
 Allowed files to modify:
@@ -102,7 +102,7 @@ A Docker build is failing.
 Error:
 [PASTE THE FULL DOCKER BUILD OUTPUT HERE]
 
-Read: 15_DOCKER_SETUP.md
+Read: docs/15_DOCKER_SETUP.md
 
 Before fixing:
 1. Identify which Dockerfile instruction is failing.
@@ -131,7 +131,7 @@ docker-compose ps output:
 docker-compose logs [service-name] output:
 [PASTE HERE]
 
-Read: 15_DOCKER_SETUP.md
+Read: docs/15_DOCKER_SETUP.md
 
 Before fixing:
 1. Identify the failing service and the exact error in its logs.
@@ -162,10 +162,10 @@ The backend or worker cannot connect to Redis.
 Error:
 [PASTE THE FULL ERROR HERE]
 
-Read: 08_REDIS_ARCHITECTURE.md
+Read: docs/08_REDIS_ARCHITECTURE.md
 
 Before fixing:
-1. Check the Redis URL environment variable name against 08_REDIS_ARCHITECTURE.md.
+1. Check the Redis URL environment variable name against docs/08_REDIS_ARCHITECTURE.md.
 2. Check whether the Redis service is running (docker-compose ps).
 3. Check the connection pool configuration in backend/app/redis/client.py.
 
@@ -189,10 +189,10 @@ A Redis operation is failing due to a key not found, wrong key format, or key co
 Error:
 [PASTE THE FULL ERROR AND THE OFFENDING CODE HERE]
 
-Read: 08_REDIS_ARCHITECTURE.md
+Read: docs/08_REDIS_ARCHITECTURE.md
 
 Before fixing:
-1. Look up the correct key format in 08_REDIS_ARCHITECTURE.md.
+1. Look up the correct key format in docs/08_REDIS_ARCHITECTURE.md.
 2. Identify whether the key builder function in backend/app/redis/keys.py is wrong or bypassed.
 3. Never hardcode a key string — always use the key builder functions.
 
@@ -221,13 +221,13 @@ Request body: [PASTE IF RELEVANT]
 Error traceback: [PASTE THE FULL TRACEBACK HERE]
 
 Read:
-- 16_API_SPECIFICATION.md
-- 13_BACKEND.md
+- docs/16_API_SPECIFICATION.md
+- docs/13_BACKEND.md
 
 Before fixing:
 1. Read the full traceback to find the exact line causing the error.
 2. Do not add error-suppression try/except blocks — fix the root cause.
-3. Confirm the fix matches the endpoint contract in 16_API_SPECIFICATION.md.
+3. Confirm the fix matches the endpoint contract in docs/16_API_SPECIFICATION.md.
 
 Allowed files to modify:
 - Only the file(s) referenced in the traceback.
@@ -245,10 +245,10 @@ STOP.
 An API endpoint is returning a response that does not match the specification.
 
 Endpoint: [METHOD] [PATH]
-Expected response (from 16_API_SPECIFICATION.md): [DESCRIBE]
+Expected response (from docs/16_API_SPECIFICATION.md): [DESCRIBE]
 Actual response: [PASTE]
 
-Read: 16_API_SPECIFICATION.md
+Read: docs/16_API_SPECIFICATION.md
 
 Before fixing:
 1. Find the exact schema mismatch.
@@ -278,8 +278,8 @@ Error / symptom:
 [DESCRIBE]
 
 Read:
-- 16_API_SPECIFICATION.md
-- 08_REDIS_ARCHITECTURE.md
+- docs/16_API_SPECIFICATION.md
+- docs/08_REDIS_ARCHITECTURE.md
 
 Before fixing:
 1. Check whether the backend WebSocket handler is running.
@@ -303,17 +303,17 @@ STOP.
 ```
 The WebSocket connection is established but events are missing or malformed.
 
-Expected event format (from 26_JOB_LIFECYCLE.md): [DESCRIBE]
+Expected event format (from docs/26_JOB_LIFECYCLE.md): [DESCRIBE]
 Actual event received: [PASTE]
 
 Read:
-- 08_REDIS_ARCHITECTURE.md
-- 26_JOB_LIFECYCLE.md
+- docs/08_REDIS_ARCHITECTURE.md
+- docs/26_JOB_LIFECYCLE.md
 
 Before fixing:
 1. Check the Redis Pub/Sub publish call in the Workflow Engine or Migration Worker.
 2. Check the WebSocket relay handler that reads from Pub/Sub and forwards to the client.
-3. Verify the event JSON structure matches 26_JOB_LIFECYCLE.md exactly.
+3. Verify the event JSON structure matches docs/26_JOB_LIFECYCLE.md exactly.
 
 Allowed files to modify:
 - backend/app/websocket/
@@ -342,8 +342,8 @@ Redis status key value: [PASTE redis-cli GET output]
 Worker logs: [PASTE]
 
 Read:
-- 07_WORKFLOW_ENGINE.md
-- 26_JOB_LIFECYCLE.md
+- docs/07_WORKFLOW_ENGINE.md
+- docs/26_JOB_LIFECYCLE.md
 
 Before fixing:
 1. Check whether the state handler is throwing a silent exception.
@@ -372,8 +372,8 @@ Error in Redis: [PASTE]
 Worker traceback: [PASTE]
 
 Read:
-- 07_WORKFLOW_ENGINE.md
-- 26_JOB_LIFECYCLE.md
+- docs/07_WORKFLOW_ENGINE.md
+- docs/26_JOB_LIFECYCLE.md
 
 Before fixing:
 1. Find the exact exception that caused the FAILED transition.
@@ -402,7 +402,7 @@ The HIPIFY state is failing or hipify-clang is producing unexpected output.
 Error:
 [PASTE]
 
-Read: 10_COMPILATION_PIPELINE.md
+Read: docs/10_COMPILATION_PIPELINE.md
 
 Before fixing:
 1. Check the subprocess call in backend/app/compiler/hipify_runner.py.
@@ -434,7 +434,7 @@ Expected CompilerError objects:
 Actual parsed output:
 [PASTE]
 
-Read: 10_COMPILATION_PIPELINE.md
+Read: docs/10_COMPILATION_PIPELINE.md
 
 Before fixing:
 1. Check the regex or parser logic in backend/app/compiler/error_parser.py.
@@ -462,11 +462,11 @@ The Fireworks AI client is returning an error or being rate-limited.
 Error:
 [PASTE]
 
-Read: 09_AI_AGENTS.md
+Read: docs/09_AI_AGENTS.md
 
 Before fixing:
 1. Check the error type (auth error, rate limit, timeout, bad request).
-2. For rate limits: verify the exponential backoff is implemented per 09_AI_AGENTS.md.
+2. For rate limits: verify the exponential backoff is implemented per docs/09_AI_AGENTS.md.
 3. For auth errors: check FIREWORKS_API_KEY is loaded from the environment correctly.
 4. Do not change the agent prompt templates.
 
@@ -486,10 +486,10 @@ STOP.
 An AI agent is returning output that does not match the expected schema.
 
 Agent: [Analysis Agent / Patch Agent / Research Agent]
-Expected output schema (from 09_AI_AGENTS.md): [DESCRIBE]
+Expected output schema (from docs/09_AI_AGENTS.md): [DESCRIBE]
 Actual output: [PASTE]
 
-Read: 09_AI_AGENTS.md
+Read: docs/09_AI_AGENTS.md
 
 Before fixing:
 1. Check whether the model response is structured JSON or free text.
@@ -519,12 +519,12 @@ Error (from browser console or network tab):
 [PASTE]
 
 Read:
-- 14_FRONTEND.md
-- 16_API_SPECIFICATION.md
+- docs/14_FRONTEND.md
+- docs/16_API_SPECIFICATION.md
 
 Before fixing:
 1. Check the API client call in frontend/services/.
-2. Verify the request format matches 16_API_SPECIFICATION.md.
+2. Verify the request format matches docs/16_API_SPECIFICATION.md.
 3. Check CORS configuration on the backend.
 4. Do not change the UI component layout.
 
@@ -549,8 +549,8 @@ Browser console errors: [PASTE]
 Network tab WebSocket frames: [PASTE a sample]
 
 Read:
-- 14_FRONTEND.md
-- 26_JOB_LIFECYCLE.md
+- docs/14_FRONTEND.md
+- docs/26_JOB_LIFECYCLE.md
 
 Before fixing:
 1. Check whether events are arriving in the browser (Network tab → WS frames).
@@ -558,7 +558,7 @@ Before fixing:
 3. If events don't arrive: use DB-9 (WebSocket Failures) instead.
 
 Allowed files to modify:
-- frontend/components/Timeline (or equivalent per 03_PROJECT_STRUCTURE.md)
+- frontend/components/Timeline (or equivalent per docs/03_PROJECT_STRUCTURE.md)
 - frontend/hooks/ (WebSocket hook only)
 
 Fix the component. Watch a live migration and confirm all 10 states animate correctly.
@@ -581,8 +581,8 @@ Symptom: [DESCRIBE]
 Redis active queue contents: [PASTE redis-cli LRANGE output]
 
 Read:
-- 24_SCALABILITY.md
-- 08_REDIS_ARCHITECTURE.md
+- docs/24_SCALABILITY.md
+- docs/08_REDIS_ARCHITECTURE.md
 
 Before fixing:
 1. Check whether mark_active() is called atomically before the job starts.
@@ -611,8 +611,8 @@ Symptoms:
 - Job is no longer in the active queue
 
 Read:
-- 24_SCALABILITY.md
-- 26_JOB_LIFECYCLE.md
+- docs/24_SCALABILITY.md
+- docs/26_JOB_LIFECYCLE.md
 
 Before fixing:
 1. Check the crash traceback in worker logs.

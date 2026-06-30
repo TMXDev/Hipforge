@@ -1,4 +1,4 @@
-# MOCK_SERVICES.md
+# .agent/MOCK_SERVICES.md
 
 > **Pre-hackathon development guide.**
 >
@@ -225,7 +225,7 @@ When the hackathon starts and real services are available, do this in order:
        Run: hipify-clang --version && hipcc --version
        Test: run Session 8.1 gate manually
 [ ] 6. Run the full E2E test (Session 14.1) against real services
-[ ] 7. Update SESSION_STATE.json: set mode to "hackathon"
+[ ] 7. Update .agent/SESSION_STATE.json: set mode to "hackathon"
        Set ready_to_swap=true for each service
 ```
 
