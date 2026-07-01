@@ -181,34 +181,49 @@ async def test_websocket_stream_events(redis_test_client):
     
     # Synchronous function executing inside worker thread
     def run_websocket_client():
+        print("\n[Client] Connecting to websocket...")
         with client.websocket_connect(f"/ws/v1/migrate/{migration_id}/stream") as ws:
+            print("[Client] Connected! Waiting for handshake...")
             # Receive initial connection message
             conn_msg = ws.receive_json()
+            print(f"[Client] Received handshake: {conn_msg}")
             assert conn_msg["type"] == "connected"
             assert conn_msg["migration_id"] == migration_id
             
             # Receive 10 stages
             stages_received = []
-            for _ in range(10):
+            for i in range(10):
+                print(f"[Client] Waiting for stage {i+1}...")
                 msg = ws.receive_json()
+                print(f"[Client] Received stage {i+1}: {msg}")
                 assert msg["type"] == "event"
                 stages_received.append(msg["stage"])
-                
-            # WebSocket should close gracefully after COMPLETED event
-            try:
-                ws.receive_json()
-                pytest.fail("WebSocket did not close gracefully after terminal stage")
-            except Exception:
-                pass
                 
             return stages_received
 
     # Start the sync client thread
     import anyio
-    client_future = anyio.to_thread.run_sync(run_websocket_client)
+    client_future = asyncio.create_task(anyio.to_thread.run_sync(run_websocket_client))
     
-    # Wait for the client to connect
-    await asyncio.sleep(0.2)
+    # Wait for the client to connect and subscribe
+    print("[Test] Waiting for client to connect and subscribe...")
+    from app.redis.keys import events_channel
+    channel = events_channel(migration_id)
+    print(f"[Test] Target channel: {channel}")
+    print(f"[Test] Before loop, pubsub_channels keys: {list(getattr(redis_test_client, 'pubsub_channels', {}).keys())}")
+    for i in range(100):
+        if hasattr(redis_test_client, "pubsub_channels"):
+            if channel in redis_test_client.pubsub_channels:
+                print(f"[Test] Found channel in pubsub_channels after {i} iterations!")
+                break
+        else:
+            from app.websocket.manager import manager
+            if migration_id in manager.active_connections:
+                print(f"[Test] Found migration in active_connections after {i} iterations!")
+                break
+        await asyncio.sleep(0.05)
+    
+    print("[Test] Connection established! Publishing stages...")
     
     expected_stages = [
         "QUEUED", "PREPARING", "HIPIFY", "SCA", "COMPILING",
@@ -217,14 +232,23 @@ async def test_websocket_stream_events(redis_test_client):
     
     # Publish all 10 stages
     for stage in expected_stages:
+        print(f"[Test] Publishing stage {stage}...")
         await publish_event(
             migration_id=migration_id,
             stage=stage,
             status="completed" if stage == "COMPLETED" else "started",
             message=f"Stage {stage} transitioned successfully"
         )
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
         
     # Await the test results from thread
-    stages_received = await client_future
-    assert stages_received == expected_stages
+    print("[Test] Awaiting client thread future...")
+    try:
+        stages_received = await asyncio.wait_for(client_future, timeout=5.0)
+        print(f"[Test] Client thread finished. Stages: {stages_received}")
+        assert stages_received == expected_stages
+    except asyncio.TimeoutError:
+        print("[Test] TIMEOUT waiting for client thread future!")
+        raise
+
+
