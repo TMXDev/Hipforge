@@ -109,7 +109,7 @@ FIREWORKS_API_KEY=your_real_fireworks_api_key_here
 ### 2. Launch the Application
 Run the following command at the repository root:
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 Once all containers are running:
@@ -131,7 +131,7 @@ If you prefer to run the services individually on your host machine for developm
 ### 1. Setup & Start Redis
 If you have Docker but want to run the app code bare-metal, start Redis via Compose:
 ```bash
-docker-compose up -d redis
+docker compose up -d redis
 ```
 
 ### 2. Start the Backend API Server
