@@ -25,7 +25,7 @@ HIPForge/
 
 ## Current Development Phase
 
-**Mode**: Pre-Hackathon (external APIs not yet available)
+**Mode**: Hackathon (external APIs and compiler tools are connected/ready)
 
 | Service | Available | How to Use |
 |---------|-----------|------------|

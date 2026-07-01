@@ -4,10 +4,12 @@ from app.schemas.migration import MigrationStatusResponse
 import app.redis.client
 from app.redis.keys import status_key, metadata_key, journal_key
 from app.websocket.stream import handle_websocket_stream
+from app.api.security_utils import validate_migration_id
 
 router = APIRouter()
 
 async def get_status_logic(migration_id: str) -> MigrationStatusResponse:
+    validate_migration_id(migration_id)
     # 1. Fetch status key
     s_key = status_key(migration_id)
     redis_status = await app.redis.client.redis_client.get(s_key)
@@ -66,8 +68,11 @@ async def get_migration_status_fallback_short(migration_id: str):
 
 @router.get("/ws/v1/migrate/{migration_id}/stream")
 async def websocket_stream_http_fallback(migration_id: str):
+    validate_migration_id(migration_id)
     raise HTTPException(status_code=400, detail="WebSocket protocol required")
 
 @router.websocket("/ws/v1/migrate/{migration_id}/stream")
 async def websocket_stream(migration_id: str, websocket: WebSocket):
+    validate_migration_id(migration_id)
     await handle_websocket_stream(websocket, migration_id)
+

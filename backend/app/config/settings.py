@@ -32,4 +32,33 @@ class Settings:
         if origin.strip()
     ]
 
+    @property
+    def max_file_size_bytes(self) -> int:
+        limit = self.WORKSPACE_SIZE_LIMIT
+        if not limit:
+            return 100 * 1024 * 1024
+        limit = limit.upper().strip()
+        multiplier = 1
+        if limit.endswith("GB"):
+            multiplier = 1024 * 1024 * 1024
+            limit = limit[:-2]
+        elif limit.endswith("MB"):
+            multiplier = 1024 * 1024
+            limit = limit[:-2]
+        elif limit.endswith("KB"):
+            multiplier = 1024
+            limit = limit[:-2]
+        elif limit.endswith("B"):
+            limit = limit[:-1]
+        try:
+            return int(limit) * multiplier
+        except ValueError:
+            return 100 * 1024 * 1024
+
+    def validate(self) -> None:
+        if not self.USE_MOCK_AI:
+            if not self.FIREWORKS_API_KEY or self.FIREWORKS_API_KEY.strip() in ("", "your_fireworks_api_key"):
+                raise ValueError("FIREWORKS_API_KEY must be set to a valid key in non-mock mode.")
+
 settings = Settings()
+settings.validate()
