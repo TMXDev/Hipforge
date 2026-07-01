@@ -137,10 +137,6 @@ class _MockPubSub:
         pass
 
 mock_redis_instance = MockRedis()
-app.redis.client.redis_client = mock_redis_instance
-app.redis.manager.redis_client = mock_redis_instance
-app.redis.publisher.redis_client = mock_redis_instance
-app.redis.subscriber.redis_client = mock_redis_instance
 
 # 3. Patch compiler function
 def _make_mock_handle_compiling(original_handle):
@@ -148,7 +144,8 @@ def _make_mock_handle_compiling(original_handle):
         await original_handle(context)
         # Check if research stage has set researched=True (which MockResearchAgent does)
         # Or check research context
-        is_researched = getattr(context, "researched", False) or "ROCm" in getattr(context, "research_context", "")
+        research_context = getattr(context, "research_context", "") or ""
+        is_researched = getattr(context, "researched", False) or "ROCm" in research_context
         if not is_researched:
             context.compilation_success = False
             context.compiler_errors = [
@@ -165,9 +162,6 @@ def _make_mock_handle_compiling(original_handle):
             context.compiler_errors = []
     return mock_handle_compiling
 
-original_handle_compiling = app.workflow_engine.states.handle_compiling
-mock_compiling = _make_mock_handle_compiling(original_handle_compiling)
-app.workflow_engine.states.handle_compiling = mock_compiling
 
 async def listen_to_events(migration_id):
     pubsub = mock_redis_instance.pubsub()
@@ -192,6 +186,17 @@ async def run_demo():
     print("       HIPFORGE E2E SIMULATION DEMO START         ")
     print("==================================================")
     
+    # 2. Setup mock redis in global modules
+    app.redis.client.redis_client = mock_redis_instance
+    app.redis.manager.redis_client = mock_redis_instance
+    app.redis.publisher.redis_client = mock_redis_instance
+    app.redis.subscriber.redis_client = mock_redis_instance
+
+    # 3. Patch compiler function
+    original_handle_compiling = app.workflow_engine.states.handle_compiling
+    mock_compiling = _make_mock_handle_compiling(original_handle_compiling)
+    app.workflow_engine.states.handle_compiling = mock_compiling
+
     # Get CUDA file path
     fixture_dir = Path("tests/integration/fixtures")
     cuda_path = fixture_dir / "e2e_sample.cu"

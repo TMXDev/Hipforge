@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "project": "HIPForge",
-  "last_updated": "2026-07-01T19:44:00Z",
+  "last_updated": "2026-07-01T22:10:00Z",
   "last_session": "14.3",
   "mode": "hackathon",
   "mode_notes": "External APIs (Fireworks AI) and compiler tools (hipify, hipcc) are connected to real services.",
@@ -205,7 +205,7 @@
     "14.3": {
       "status": "completed",
       "gate_passed": true,
-      "notes": "Demo dry run successfully completed. Verified all 228 tests passing cleanly including WebSocket connection and E2E integration tests."
+      "notes": "Demo dry run successfully completed. Verified all 228 tests passing cleanly including WebSocket connection and E2E integration tests after fixing test-isolation side effects in scripts/test_demo.py."
     }
   },
   "mocked_services": {
