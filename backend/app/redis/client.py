@@ -4,7 +4,8 @@ from app.config.settings import settings
 # Initialize the Redis connection pool using REDIS_URL from settings
 redis_pool = aioredis.ConnectionPool.from_url(
     settings.REDIS_URL,
-    decode_responses=True
+    decode_responses=True,
+    socket_timeout=None
 )
 
 # Global async Redis client instance
