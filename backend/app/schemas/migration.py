@@ -18,3 +18,10 @@ class MigrationResponse(BaseModel):
     migration_id: str
     status: str
     message: str
+
+class MigrationStatusResponse(BaseModel):
+    migration_id: str
+    status: str
+    stage: str
+    created_at: str
+    updated_at: str

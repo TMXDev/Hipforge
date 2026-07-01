@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
   "project": "HIPForge",
-  "last_updated": "2026-07-01T16:03:00Z",
-  "last_session": "12.1",
+  "last_updated": "2026-07-01T16:07:00Z",
+  "last_session": "12.2",
   "mode": "pre-hackathon",
   "mode_notes": "External APIs (Fireworks AI) and compiler tools (hipify, hipcc) are mocked. Switch mode to 'hackathon' when real services become available.",
   
   "phase": {
-    "current": 12,
-    "current_session": "12.2",
-    "current_session_name": "Status Endpoint + WebSocket Relay",
+    "current": 13,
+    "current_session": "13.1",
+    "current_session_name": "Upload page + job submission flow",
     "status": "in_progress"
   },
   
@@ -46,7 +46,7 @@
     "11.1": {"status": "completed", "gate_passed": true, "notes": "Implemented the four report generators (generate_markdown_report, generate_json_report, generate_git_patch, build_zip) in report_service.py. Integrated them sequentially into the handle_generating_report state handler in states.py. All 206 tests passed."},
     "11.2": {"status": "completed", "gate_passed": true, "notes": "Replaced the 501 stub for the download endpoint in download.py with real logic verifying COMPLETED state in Redis, locating the exports/HIPForge_Migration.zip file, and streaming it as attachment. Registered fallback routes for /migrate/{id}/download and resolved connection issues with namespace shadowing on test client. All 209 tests passed."},
     "12.1": {"status": "completed", "gate_passed": true, "notes": "Implemented schemas, service orchestrator, and endpoints for POST /api/v1/migrate/upload and /api/v1/migrate/paste. Integrated with Workspace Manager and Redis queue. Verified via 5 passing integration tests."},
-    "12.2": {"status": "not_started", "gate_passed": false, "notes": ""},
+    "12.2": {"status": "completed", "gate_passed": true, "notes": "Implemented GET status API routes and WebSocket Pub/Sub streams forwarding logs/events to clients. Verified with 5 new integration tests."},
     "13.1": {"status": "not_started", "gate_passed": false, "notes": ""},
     "13.2": {"status": "not_started", "gate_passed": false, "notes": ""},
     "13.3": {"status": "not_started", "gate_passed": false, "notes": ""},
@@ -83,5 +83,5 @@
 
   "decisions_made": [],
 
-  "next_action": "Proceed to Session 12.2 (implement status endpoint and WebSocket status relay)."
+  "next_action": "Proceed to Phase 13 (implementing frontend upload page and job submission flow)."
 }
