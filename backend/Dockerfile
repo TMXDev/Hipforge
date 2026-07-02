@@ -6,14 +6,14 @@ WORKDIR /app
 
 # Copy the requirements file from either backend/requirements.txt or requirements.txt
 # This ensures build compatibility whether context is set to . or ./backend
-COPY backend/requirements.tx[t] requirements.tx[t] ./
+COPY *requirements.txt */requirements.txt ./
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the backend application code from either backend/app or app
 # This ensures build compatibility whether context is set to . or ./backend
-COPY backend/ap[p] ap[p] ./app/
+COPY *ap[p] */ap[p] ./app/
 
 # Expose port 8000 for FastAPI
 EXPOSE 8000

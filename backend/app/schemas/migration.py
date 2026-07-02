@@ -25,3 +25,6 @@ class MigrationStatusResponse(BaseModel):
     stage: str
     created_at: str
     updated_at: str
+    current_stage: str | None = None
+    progress: float = 0.0
+    message: str = ""

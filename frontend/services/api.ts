@@ -6,9 +6,13 @@
 
 import type { MigrationResponse, MigrationStatus, JournalEntry } from "@/types/migration";
 
-/** Base URL read from the Next.js environment variable, defaults to localhost for dev. */
+/** Base URL read from the Next.js environment variable, defaults to localhost for dev.
+ *  Supports both NEXT_PUBLIC_API_URL and NEXT_PUBLIC_BACKEND_URL for compatibility. */
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL ??
+  process.env.NEXT_PUBLIC_BACKEND_URL ??
+  "http://localhost:8000";
+
 
 /**
  * Uploads a CUDA source file (.cu or .zip) to start a new migration.

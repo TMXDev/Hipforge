@@ -15,7 +15,10 @@ services:
       - redis
     networks:
       - hipforge-network
-    command: >
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - USE_MOCK_COMPILER=true
+    command: |
       python -c "
       try:
           import uvicorn
@@ -42,7 +45,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "4444:6379"
     networks:
       - hipforge-network
     volumes:
@@ -60,7 +63,10 @@ services:
       - redis
     networks:
       - hipforge-network
-    command: >
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - USE_MOCK_COMPILER=true
+    command: |
       python -c "
       import os, sys, time
       try:

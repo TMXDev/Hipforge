@@ -58,7 +58,8 @@ async def handle_websocket_stream(websocket: WebSocket, migration_id: str):
                     # Close gracefully on terminal states
                     if payload.get("type") == "event":
                         stage = payload.get("stage")
-                        if stage in ("COMPLETED", "FAILED"):
+                        status = payload.get("status")
+                        if stage in ("COMPLETED", "FAILED") and status in ("completed", "failed"):
                             # Let the client process the last event before closing the websocket
                             await asyncio.sleep(0.5)
                             break

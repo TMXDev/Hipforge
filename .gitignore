@@ -1,0 +1,26 @@
+# HIPForge Workspace Ignores
+workspace/
+.env
+
+# Python / Poetry / Pytest
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+.poetry/
+
+# Frontend / Next.js / Node
+node_modules/
+.next/
+out/
+build/
+tsconfig.tsbuildinfo
+.eslintcache
+
+# OS Files
+.DS_Store
+Thumbs.db

@@ -204,7 +204,50 @@ async def handle_compiling(context: WorkflowContext) -> str:
         hip_source, attempt_num, context.retry_budget,
     )
 
-    result = run_hipcc(hip_source, binary_path)
+    from app.redis.client import redis_client
+    from app.redis.keys import metadata_key
+    
+    target_arch = None
+    try:
+        metadata = await redis_client.hgetall(metadata_key(context.migration_id))
+        target_arch = metadata.get("target_architecture")
+    except Exception as exc:
+        logger.warning("[COMPILING] Failed to read target architecture from Redis: %s", exc)
+
+    result = run_hipcc(hip_source, binary_path, target_arch=target_arch)
+
+    # Stream compile output to client over WebSocket via compiler_channel Redis channel
+    try:
+        from app.redis.keys import compiler_channel
+        from app.redis.client import redis_client
+        import json
+        from datetime import datetime, timezone
+        
+        channel = compiler_channel(context.migration_id)
+        stdout = result.get("stdout", "")
+        stderr = result.get("stderr", "")
+        
+        for line in stdout.splitlines():
+            if line.strip():
+                payload = {
+                    "type": "compiler_log",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "level": "INFO",
+                    "content": line
+                }
+                await redis_client.publish(channel, json.dumps(payload))
+                
+        for line in stderr.splitlines():
+            if line.strip():
+                payload = {
+                    "type": "compiler_log",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "level": "ERROR",
+                    "content": line
+                }
+                await redis_client.publish(channel, json.dumps(payload))
+    except Exception as exc:
+        logger.warning("[COMPILING] Failed to publish compilation stream: %s", exc)
 
     # Persist compiler log (logs are never overwritten per spec)
     with open(log_path, "w", encoding="utf-8") as f:

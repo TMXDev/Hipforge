@@ -10,17 +10,19 @@ logger = logging.getLogger("hipcc_runner")
 class HipccRunner:
     """Real runner that executes the actual hipcc compiler tool."""
     
-    def run_hipcc(self, source_path: str, output_path: str) -> Dict[str, Any]:
+    def run_hipcc(self, source_path: str, output_path: str, target_arch: str = None) -> Dict[str, Any]:
         """
         Runs the real hipcc compiler as a subprocess.
         Parses output errors if compiling fails.
         """
-        logger.info(f"Running hipcc compiler on {source_path} -> {output_path}")
+        logger.info(f"Running hipcc compiler on {source_path} -> {output_path} target_arch={target_arch}")
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         
         cmd = ["hipcc", source_path, "-o", output_path]
+        if target_arch:
+            cmd.append(f"--offload-arch={target_arch}")
         
         try:
             result = subprocess.run(
@@ -82,14 +84,14 @@ class HipccRunner:
 class MockHipccRunner:
     """Mock compiler used during pre-hackathon mode when ROCm sdk is missing."""
     
-    def run_hipcc(self, source_path: str, output_path: str) -> Dict[str, Any]:
+    def run_hipcc(self, source_path: str, output_path: str, target_arch: str = None) -> Dict[str, Any]:
         """
         Simulates running hipcc.
         If the file contains the compile error trigger keyword, it generates realistic mock diagnostics,
         runs them through the error parser, and returns success=False.
         Otherwise, writes a dummy file to output_path and returns success=True.
         """
-        logger.info(f"[MOCK] run_hipcc called for {source_path} -> {output_path}")
+        logger.info(f"[MOCK] run_hipcc called for {source_path} -> {output_path} target_arch={target_arch}")
         
         try:
             with open(source_path, "r", encoding="utf-8") as f:
@@ -170,10 +172,10 @@ def get_hipcc_runner():
     else:
         return HipccRunner()
 
-def run_hipcc(source_path: str, output_path: str) -> Dict[str, Any]:
+def run_hipcc(source_path: str, output_path: str, target_arch: str = None) -> Dict[str, Any]:
     """
     Top-level helper function to run hipcc.
     Dispatches to the active runner configured in the environment settings.
     """
     runner = get_hipcc_runner()
-    return runner.run_hipcc(source_path, output_path)
+    return runner.run_hipcc(source_path, output_path, target_arch)

@@ -14,7 +14,8 @@ import {
   Loader2,
   AlertCircle,
   ChevronDown,
-  Zap,
+  ArrowRight,
+  ClipboardType,
 } from "lucide-react";
 import { submitMigration } from "@/services/api";
 import type { GpuArchitecture } from "@/types/migration";
@@ -42,26 +43,29 @@ const GPU_ARCHITECTURES: { value: GpuArchitecture; label: string }[] = [
 /** Retry budget options */
 const RETRY_OPTIONS = [1, 2, 3, 5];
 
+type InputMode = "file" | "paste";
+
 interface UploadCardProps {
   /** Called with the new migration_id after a successful submission */
   onSuccess: (migrationId: string) => void;
 }
 
 /**
- * UploadCard — Primary file upload component for HIPForge.
+ * UploadCard — Luxury editorial file upload component for HIPForge.
  *
  * Provides:
- * - Drag-and-drop zone accepting .cu and .zip files
- * - File picker button fallback
+ * - Two modes: drag-and-drop file upload, or paste CUDA code directly
  * - File validation (type + size)
- * - GPU architecture and retry budget selectors
- * - Start Migration button with loading state
- * - Inline error display
+ * - GPU architecture and retry budget selectors (underline-only luxury inputs)
+ * - Start Migration button with gold slide animation
+ * - Inline error display with architectural border treatment
  */
 export default function UploadCard({ onSuccess }: UploadCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [inputMode, setInputMode] = useState<InputMode>("file");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [pastedCode, setPastedCode] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -121,7 +125,6 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
   const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only clear when leaving the outer drop zone, not a child element
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragging(false);
     }
@@ -151,7 +154,6 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
       const file = e.target.files?.[0];
       if (!file) return;
       acceptFile(file);
-      // Reset so the same file can be re-selected after clearing
       e.target.value = "";
     },
     [acceptFile]
@@ -167,10 +169,61 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
     setSubmitError(null);
   }, []);
 
+  /* ── Mode switching ── */
+
+  const switchMode = useCallback((mode: InputMode) => {
+    setInputMode(mode);
+    setValidationError(null);
+    setSubmitError(null);
+    setSelectedFile(null);
+    setPastedCode("");
+  }, []);
+
+  /* ── Keyboard accessibility for drop zone ── */
+
+  const handleDropZoneKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openFilePicker();
+      }
+    },
+    [openFilePicker]
+  );
+
   /* ── Form submission ── */
 
   const handleSubmit = useCallback(async () => {
-    if (!selectedFile || isSubmitting) return;
+    if (isSubmitting) return;
+
+    // Validate paste mode
+    if (inputMode === "paste") {
+      if (!pastedCode.trim()) {
+        setValidationError("Please paste your CUDA code before submitting.");
+        return;
+      }
+      // Convert pasted code to a File object for the API
+      const blob = new Blob([pastedCode], { type: "text/x-csrc" });
+      const file = new File([blob], "pasted_code.cu", { type: "text/x-csrc" });
+      setSubmitError(null);
+      setIsSubmitting(true);
+      try {
+        const result = await submitMigration(file, targetGpu, retryBudget);
+        onSuccess(result.migration_id);
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "An unexpected error occurred. Please try again.";
+        setSubmitError(message);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // Validate file mode
+    if (!selectedFile) return;
     setSubmitError(null);
     setIsSubmitting(true);
 
@@ -186,46 +239,51 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedFile, isSubmitting, targetGpu, retryBudget, onSuccess]);
+  }, [selectedFile, pastedCode, isSubmitting, inputMode, targetGpu, retryBudget, onSuccess]);
 
-  /* ── Keyboard accessibility for drop zone ── */
-
-  const handleDropZoneKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        openFilePicker();
-      }
-    },
-    [openFilePicker]
-  );
-
-  const canSubmit = selectedFile !== null && !isSubmitting;
+  const canSubmit =
+    !isSubmitting &&
+    (inputMode === "file" ? selectedFile !== null : pastedCode.trim().length > 0);
 
   return (
     <div className="w-full max-w-2xl animate-slide-up">
-      {/* Card */}
-      <div className="rounded-2xl border border-white/10 bg-surface-2 shadow-2xl shadow-black/40">
-        {/* Card header */}
-        <div className="border-b border-white/5 px-8 py-6">
-          <h2 className="text-xl font-semibold text-white">
-            Upload CUDA Project
-          </h2>
-          <p className="mt-1 text-sm text-white/50">
-            Drop a single{" "}
-            <code className="rounded bg-surface-4 px-1 py-0.5 font-mono text-xs text-brand-300">
-              .cu
-            </code>{" "}
-            file or a{" "}
-            <code className="rounded bg-surface-4 px-1 py-0.5 font-mono text-xs text-brand-300">
-              .zip
-            </code>{" "}
-            archive containing your CUDA project.
-          </p>
-        </div>
+      {/* ── Mode Tabs ── */}
+      <div className="flex border-b border-themeBorder">
+        <button
+          type="button"
+          id="upload-tab-file"
+          onClick={() => switchMode("file")}
+          className={[
+            "flex items-center gap-2 border-b-2 px-6 py-4 text-[10px] font-medium tracking-[0.25em] uppercase transition-all duration-500",
+            inputMode === "file"
+              ? "border-themeText text-themeText"
+              : "border-transparent text-themeTextMuted hover:text-themeText",
+          ].join(" ")}
+        >
+          <UploadCloud className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+          Upload File
+        </button>
+        <button
+          type="button"
+          id="upload-tab-paste"
+          onClick={() => switchMode("paste")}
+          className={[
+            "flex items-center gap-2 border-b-2 px-6 py-4 text-[10px] font-medium tracking-[0.25em] uppercase transition-all duration-500",
+            inputMode === "paste"
+              ? "border-themeText text-themeText"
+              : "border-transparent text-themeTextMuted hover:text-themeText",
+          ].join(" ")}
+        >
+          <ClipboardType className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+          Paste Code
+        </button>
+      </div>
 
-        <div className="space-y-6 px-8 py-6">
-          {/* ── Drop Zone ── */}
+      {/* ── Card body ── */}
+      <div className="space-y-8 border border-t-0 border-themeBorder bg-themeCard px-8 py-8">
+
+        {/* ══ FILE MODE ══ */}
+        {inputMode === "file" && (
           <div
             id="upload-drop-zone"
             role="button"
@@ -238,29 +296,30 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
             onKeyDown={handleDropZoneKeyDown}
             onClick={!selectedFile ? openFilePicker : undefined}
             className={[
-              "relative flex min-h-[180px] cursor-pointer flex-col items-center justify-center gap-3",
-              "rounded-xl border-2 border-dashed transition-all duration-200",
+              "relative flex min-h-[200px] cursor-pointer flex-col items-center justify-center gap-4",
+              "border border-dashed transition-all duration-700",
               isDragging
-                ? "border-brand-500 bg-brand-500/8 scale-[1.01]"
+                ? "border-[#D4AF37] bg-[#D4AF37]/4"
                 : selectedFile
-                  ? "border-emerald-500/40 bg-emerald-500/5 cursor-default"
-                  : "border-white/10 bg-surface-3 hover:border-white/20 hover:bg-surface-4",
+                  ? "cursor-default border-themeBorderStrong bg-themeBgSecondary/40"
+                  : "border-themeBorder/15 bg-transparent hover:border-themeBorderStrong hover:bg-themeBgSecondary/20",
             ].join(" ")}
           >
             {selectedFile ? (
               /* ── File selected state ── */
-              <div className="flex flex-col items-center gap-3 px-4 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15 ring-1 ring-emerald-500/30">
+              <div className="flex flex-col items-center gap-4 px-4 text-center">
+                <div className="flex h-12 w-12 items-center justify-center border border-[#D4AF37]/40 bg-[#D4AF37]/8">
                   <FileCode2
-                    className="h-6 w-6 text-emerald-400"
+                    className="h-5 w-5 text-[#D4AF37]"
+                    strokeWidth={1.5}
                     aria-hidden="true"
                   />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-white">
+                  <p className="text-sm font-medium text-themeText">
                     {selectedFile.name}
                   </p>
-                  <p className="mt-0.5 text-xs text-white/40">
+                  <p className="mt-1 text-xs text-themeTextMuted">
                     {(selectedFile.size / 1024).toFixed(1)} KB
                   </p>
                 </div>
@@ -272,40 +331,41 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
                     clearFile();
                   }}
                   aria-label="Remove selected file"
-                  className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-surface-4 px-3 py-1.5 text-xs text-white/60 transition-colors hover:border-white/20 hover:text-white"
+                  className="flex items-center gap-1.5 border border-themeBorder/15 px-4 py-2 text-[10px] font-medium tracking-[0.2em] uppercase text-themeTextMuted transition-all duration-500 hover:border-themeBorderStrong hover:text-themeText"
                 >
-                  <X className="h-3 w-3" aria-hidden="true" />
+                  <X className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
                   Remove
                 </button>
               </div>
             ) : (
               /* ── Empty / drag state ── */
-              <div className="flex flex-col items-center gap-3 px-4 text-center">
+              <div className="flex flex-col items-center gap-4 px-4 text-center">
                 <div
                   className={[
-                    "flex h-14 w-14 items-center justify-center rounded-full ring-1 transition-all duration-200",
+                    "flex h-14 w-14 items-center justify-center border transition-all duration-700",
                     isDragging
-                      ? "bg-brand-500/20 ring-brand-500/50"
-                      : "bg-surface-4 ring-white/10",
+                      ? "border-[#D4AF37] bg-[#D4AF37]/10"
+                      : "border-themeBorder bg-themeBgSecondary/40",
                   ].join(" ")}
                 >
                   <UploadCloud
                     className={[
-                      "h-7 w-7 transition-colors duration-200",
-                      isDragging ? "text-brand-400" : "text-white/40",
+                      "h-6 w-6 transition-colors duration-700",
+                      isDragging ? "text-[#D4AF37]" : "text-themeTextMuted",
                     ].join(" ")}
+                    strokeWidth={1.5}
                     aria-hidden="true"
                   />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-white/80">
+                  <p className="text-sm font-medium text-themeText">
                     {isDragging
-                      ? "Drop file to upload"
+                      ? "Release to upload"
                       : "Drag & drop your file here"}
                   </p>
-                  <p className="mt-1 text-xs text-white/40">
+                  <p className="mt-1.5 text-xs text-themeTextMuted">
                     or{" "}
-                    <span className="text-brand-400 underline underline-offset-2">
+                    <span className="border-b border-[#D4AF37] text-themeText">
                       browse files
                     </span>{" "}
                     · .cu or .zip · max 50 MB
@@ -314,165 +374,206 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
               </div>
             )}
           </div>
+        )}
 
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            id="upload-file-input"
-            type="file"
-            accept=".cu,.zip"
-            aria-hidden="true"
-            tabIndex={-1}
-            className="sr-only"
-            onChange={handleFileChange}
-          />
-
-          {/* Validation error */}
-          {validationError && (
-            <div
-              role="alert"
-              id="upload-validation-error"
-              className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3"
+        {/* ══ PASTE MODE ══ */}
+        {inputMode === "paste" && (
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="paste-code-textarea"
+              className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted"
             >
-              <AlertCircle
-                className="mt-0.5 h-4 w-4 shrink-0 text-red-400"
+              Paste CUDA Source Code
+            </label>
+            <textarea
+              id="paste-code-textarea"
+              value={pastedCode}
+              onChange={(e) => {
+                setPastedCode(e.target.value);
+                if (validationError) setValidationError(null);
+              }}
+              disabled={isSubmitting}
+              placeholder="// Paste your .cu CUDA source code here…"
+              rows={12}
+              className="w-full border border-themeBorder bg-themeBgSecondary/20 p-4 font-mono text-sm text-themeText placeholder-themeTextMuted/60 transition-colors duration-500 focus:border-[#D4AF37] focus:outline-none disabled:opacity-50 resize-y"
+              style={{ fontFamily: "'JetBrains Mono', monospace", lineHeight: "1.6" }}
+              aria-label="Paste your CUDA source code here"
+            />
+            <p className="text-[10px] tracking-[0.1em] text-themeTextMuted/60">
+              The code will be saved as <code className="font-mono">pasted_code.cu</code> and submitted for migration.
+            </p>
+          </div>
+        )}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          id="upload-file-input"
+          type="file"
+          accept=".cu,.zip"
+          aria-hidden="true"
+          tabIndex={-1}
+          className="sr-only"
+          onChange={handleFileChange}
+        />
+
+        {/* Validation error — architectural left-border treatment */}
+        {validationError && (
+          <div
+            role="alert"
+            id="upload-validation-error"
+            className="flex items-start gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3"
+          >
+            <AlertCircle
+              className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            />
+            <p className="text-sm text-red-700">{validationError}</p>
+          </div>
+        )}
+
+        {/* ── Options row — underline-only luxury selects ── */}
+        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
+          {/* GPU Architecture */}
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="gpu-architecture-select"
+              className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted"
+            >
+              Target GPU Architecture
+            </label>
+            <div className="relative">
+              <select
+                id="gpu-architecture-select"
+                value={targetGpu}
+                onChange={(e) =>
+                  setTargetGpu(e.target.value as GpuArchitecture)
+                }
+                disabled={isSubmitting}
+                className="select-luxury"
+              >
+                {GPU_ARCHITECTURES.map((arch) => (
+                  <option
+                    key={arch.value}
+                    value={arch.value}
+                    className="bg-themeBg text-themeText"
+                  >
+                    {arch.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-1 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-themeTextMuted"
+                strokeWidth={1.5}
                 aria-hidden="true"
               />
-              <p className="text-sm text-red-300">{validationError}</p>
             </div>
-          )}
-
-          {/* ── Options row ── */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {/* GPU Architecture */}
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="gpu-architecture-select"
-                className="text-xs font-medium text-white/60"
-              >
-                Target GPU Architecture
-              </label>
-              <div className="relative">
-                <select
-                  id="gpu-architecture-select"
-                  value={targetGpu}
-                  onChange={(e) =>
-                    setTargetGpu(e.target.value as GpuArchitecture)
-                  }
-                  disabled={isSubmitting}
-                  className="w-full appearance-none rounded-lg border border-white/10 bg-surface-3 px-3 py-2.5 pr-9 text-sm text-white/90 transition-colors hover:border-white/20 focus:border-brand-500 focus:outline-none disabled:opacity-50"
-                >
-                  {GPU_ARCHITECTURES.map((arch) => (
-                    <option
-                      key={arch.value}
-                      value={arch.value}
-                      className="bg-surface-3"
-                    >
-                      {arch.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
-                  aria-hidden="true"
-                />
-              </div>
-            </div>
-
-            {/* Retry Budget */}
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="retry-budget-select"
-                className="text-xs font-medium text-white/60"
-              >
-                AI Repair Attempts
-              </label>
-              <div className="relative">
-                <select
-                  id="retry-budget-select"
-                  value={retryBudget}
-                  onChange={(e) => setRetryBudget(Number(e.target.value))}
-                  disabled={isSubmitting}
-                  className="w-full appearance-none rounded-lg border border-white/10 bg-surface-3 px-3 py-2.5 pr-9 text-sm text-white/90 transition-colors hover:border-white/20 focus:border-brand-500 focus:outline-none disabled:opacity-50"
-                >
-                  {RETRY_OPTIONS.map((n) => (
-                    <option key={n} value={n} className="bg-surface-3">
-                      {n} {n === 1 ? "attempt" : "attempts"}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
-                  aria-hidden="true"
-                />
-              </div>
-            </div>
+            <p className="text-[9px] leading-relaxed text-themeTextMuted/60 uppercase tracking-wider">
+              Sets the --offload-arch compilation target target for ROCm/HIP.
+            </p>
           </div>
 
-          {/* Submit error */}
-          {submitError && (
-            <div
-              role="alert"
-              id="upload-submit-error"
-              className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3"
+          {/* Retry Budget */}
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="retry-budget-select"
+              className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted"
             >
-              <AlertCircle
-                className="mt-0.5 h-4 w-4 shrink-0 text-red-400"
+              AI Repair Attempts
+            </label>
+            <div className="relative">
+              <select
+                id="retry-budget-select"
+                value={retryBudget}
+                onChange={(e) => setRetryBudget(Number(e.target.value))}
+                disabled={isSubmitting}
+                className="select-luxury"
+              >
+                {RETRY_OPTIONS.map((n) => (
+                  <option
+                    key={n}
+                    value={n}
+                    className="bg-themeBg text-themeText"
+                  >
+                    {n} {n === 1 ? "attempt" : "attempts"}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-1 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-themeTextMuted"
+                strokeWidth={1.5}
                 aria-hidden="true"
               />
-              <div>
-                <p className="text-sm font-medium text-red-300">
-                  Submission Failed
-                </p>
-                <p className="mt-0.5 text-xs text-red-400/80">{submitError}</p>
-              </div>
             </div>
-          )}
-
-          {/* ── Start Migration button ── */}
-          <button
-            id="start-migration-button"
-            type="button"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            aria-busy={isSubmitting}
-            aria-label={
-              isSubmitting
-                ? "Starting migration, please wait"
-                : "Start Migration"
-            }
-            className={[
-              "flex w-full items-center justify-center gap-2.5 rounded-xl px-6 py-3.5 text-sm font-semibold",
-              "transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-2",
-              canSubmit
-                ? "bg-gradient-to-r from-brand-600 to-brand-500 text-white shadow-lg shadow-brand-900/40 hover:from-brand-500 hover:to-brand-400 hover:shadow-brand-800/50 active:scale-[0.98]"
-                : "cursor-not-allowed bg-surface-4 text-white/30",
-            ].join(" ")}
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2
-                  className="h-4 w-4 animate-spin"
-                  aria-hidden="true"
-                />
-                Starting Migration…
-              </>
-            ) : (
-              <>
-                <Zap className="h-4 w-4" aria-hidden="true" />
-                Start Migration
-              </>
-            )}
-          </button>
-
-          {/* Info footer */}
-          {!isSubmitting && (
-            <p className="text-center text-xs text-white/30">
-              Your job is queued immediately. You will be redirected to the live
-              dashboard.
+            <p className="text-[9px] leading-relaxed text-themeTextMuted/60 uppercase tracking-wider">
+              Max AI analysis and patch cycles to resolve compilation errors.
             </p>
-          )}
+          </div>
         </div>
+
+        {/* Submit error */}
+        {submitError && (
+          <div
+            role="alert"
+            id="upload-submit-error"
+            className="flex items-start gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3"
+          >
+            <AlertCircle
+              className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            />
+            <div>
+              <p className="text-sm font-medium text-red-700">
+                Submission Failed
+              </p>
+              <p className="mt-0.5 text-xs text-red-600/80">{submitError}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Divider ── */}
+        <div className="border-t border-themeBorder" />
+
+        {/* ── Start Migration button — luxury primary with gold slide ── */}
+        <button
+          id="start-migration-button"
+          type="button"
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          aria-busy={isSubmitting}
+          aria-label={
+            isSubmitting
+              ? "Starting migration, please wait"
+              : "Start Migration"
+          }
+          className="btn-primary w-full"
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
+              <span>Starting Migration…</span>
+            </>
+          ) : (
+            <>
+              <span>Start Migration</span>
+              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+            </>
+          )}
+        </button>
+
+        {/* Info footer */}
+        {!isSubmitting && (
+          <p className="text-center text-[10px] tracking-[0.1em] text-themeTextMuted/70">
+            Your job is queued immediately — you will be redirected to the live dashboard.
+          </p>
+        )}
+
       </div>
     </div>
   );

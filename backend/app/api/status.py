@@ -47,7 +47,10 @@ async def get_status_logic(migration_id: str) -> MigrationStatusResponse:
         status=status,
         stage=stage,
         created_at=created_at,
-        updated_at=updated_at
+        updated_at=updated_at,
+        current_stage=stage,
+        progress=100.0 if status in ("COMPLETED", "FAILED") else 50.0,
+        message=f"Migration is {status} in stage {stage}."
     )
 
 @router.get("/api/v1/migrate/{migration_id}/status", response_model=MigrationStatusResponse)
