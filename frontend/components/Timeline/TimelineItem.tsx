@@ -33,22 +33,22 @@ function StatusIcon({ status }: { status: StageState["status"] }) {
   }
   if (status === "active") {
     return (
-      <div className={`${base} border-[#1A1A1A] bg-[#1A1A1A]`}>
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F9F8F6]" strokeWidth={1.5} aria-hidden="true" />
+      <div className={`${base} border-themeText bg-themeText`}>
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-themeBg" strokeWidth={1.5} aria-hidden="true" />
       </div>
     );
   }
   if (status === "skipped") {
     return (
-      <div className={`${base} border-[#1A1A1A]/10 bg-transparent opacity-30`}>
-        <Minus className="h-3 w-3 text-[#6C6863]" strokeWidth={1.5} aria-hidden="true" />
+      <div className={`${base} border-themeBorder bg-transparent opacity-30`}>
+        <Minus className="h-3 w-3 text-themeTextMuted" strokeWidth={1.5} aria-hidden="true" />
       </div>
     );
   }
   // pending
   return (
-    <div className={`${base} border-[#1A1A1A]/15 bg-transparent`}>
-      <Clock className="h-3 w-3 text-[#6C6863]/40" strokeWidth={1.5} aria-hidden="true" />
+    <div className={`${base} border-themeBorder bg-transparent`}>
+      <Clock className="h-3 w-3 text-themeTextMuted/40" strokeWidth={1.5} aria-hidden="true" />
     </div>
   );
 }
@@ -71,27 +71,27 @@ export default function TimelineItem({
   const isCompleted = stage.status === "completed";
 
   const labelColor = isFailed
-    ? "text-red-700"
+    ? "text-red-700 dark:text-red-400"
     : isSkipped
-      ? "text-[#1A1A1A]/20"
+      ? "text-themeText/20"
       : isActive
-        ? "text-[#1A1A1A]"
+        ? "text-themeText"
         : isPending
-          ? "text-[#6C6863]/40"
-          : "text-[#1A1A1A]";
+          ? "text-themeTextMuted/40"
+          : "text-themeText";
 
   const descColor = isFailed
-    ? "text-red-600/70"
+    ? "text-red-600/70 dark:text-red-400/70"
     : isSkipped
-      ? "text-[#1A1A1A]/15"
+      ? "text-themeText/15"
       : isPending
-        ? "text-[#6C6863]/25"
-        : "text-[#6C6863]";
+        ? "text-themeTextMuted/25"
+        : "text-themeTextMuted";
 
   // Connector line: gold when completed, muted when pending/skipped
   const lineColor = isCompleted
     ? "bg-[#D4AF37]/40"
-    : "bg-[#1A1A1A]/8";
+    : "bg-themeBorder";
 
   return (
     <div className="flex gap-5">
@@ -112,14 +112,14 @@ export default function TimelineItem({
           className={[
             "border-t py-4 pl-4 pr-4 transition-all duration-500",
             isActive
-              ? "border-t-[#1A1A1A]/10 border-l-2 border-l-[#D4AF37] pl-5"
+              ? "border-t-themeBorder border-l-2 border-l-[#D4AF37] pl-5"
               : isFailed
-                ? "border-t-[#1A1A1A]/10 border-l-2 border-l-red-600 pl-5"
+                ? "border-t-themeBorder border-l-2 border-l-red-600 pl-5"
                 : isSkipped
-                  ? "border-t-[#1A1A1A]/5 opacity-30"
+                  ? "border-t-themeBorder/30 opacity-30"
                   : isPending
-                    ? "border-t-[#1A1A1A]/8"
-                    : "border-t-[#1A1A1A]/10",
+                    ? "border-t-themeBorder/50"
+                    : "border-t-themeBorder",
           ].join(" ")}
         >
           <div className="flex items-start justify-between gap-2">
@@ -131,7 +131,7 @@ export default function TimelineItem({
             {stage.timestamp && !isPending && (
               <time
                 dateTime={stage.timestamp}
-                className="shrink-0 text-[10px] tracking-[0.15em] text-[#6C6863]/50"
+                className="shrink-0 text-[10px] tracking-[0.15em] text-themeTextMuted/50"
               >
                 {new Date(stage.timestamp).toLocaleTimeString([], {
                   hour: "2-digit",
@@ -161,7 +161,7 @@ export default function TimelineItem({
 
           {/* Failed error message — monospace code block */}
           {isFailed && stage.message && (
-            <pre className="mt-3 overflow-x-auto border border-red-200 bg-red-50 px-3 py-2 font-mono text-xs text-red-700">
+            <pre className="mt-3 overflow-x-auto border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-xs text-red-700 dark:text-red-400">
               {stage.message}
             </pre>
           )}

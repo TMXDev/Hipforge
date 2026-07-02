@@ -16,12 +16,12 @@ export default function Footer() {
         {/* Brand */}
         <div className="flex flex-col gap-2">
           <span
-            className="font-serif text-lg font-normal text-themeBg"
+            className="font-serif text-lg font-normal text-themeTextOnDark"
             style={{ fontFamily: "'Playfair Display', Georgia, serif" }}
           >
             HIPForge
           </span>
-          <p className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted">
+          <p className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextOnDarkMuted">
             AI-Powered CUDA to ROCm Migration
           </p>
         </div>
@@ -33,14 +33,14 @@ export default function Footer() {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="HIPForge on GitHub"
-            className="group flex items-center gap-2 text-themeTextMuted transition-colors duration-500 hover:text-[#D4AF37]"
+            className="group flex items-center gap-2 text-themeTextOnDarkMuted transition-colors duration-500 hover:text-[#D4AF37]"
           >
             <Github className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
             <span className="text-[10px] font-medium tracking-[0.2em] uppercase">
               GitHub
             </span>
           </a>
-          <p className="text-[10px] tracking-[0.15em] text-themeTextMuted/60">
+          <p className="text-[10px] tracking-[0.15em] text-themeTextOnDarkMuted/60">
             © {new Date().getFullYear()} HIPForge — All rights reserved
           </p>
         </div>

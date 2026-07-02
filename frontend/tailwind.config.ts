@@ -36,6 +36,9 @@ const config: Config = {
         themeSurfaceHover: "var(--surface-hover)",
         themeDarkSection: "var(--bg-dark-section)",
         themeTextInverted: "var(--text-inverted)",
+        themeTextOnDark: "var(--text-on-dark)",
+        themeTextOnDarkMuted: "var(--text-on-dark-muted)",
+        themeBorderOnDark: "var(--border-on-dark)",
 
         // Keep JetBrains Mono code colours for compiler output
         brand: {

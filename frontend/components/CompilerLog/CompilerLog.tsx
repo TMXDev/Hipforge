@@ -104,16 +104,16 @@ export default function CompilerLog({ events }: CompilerLogProps) {
   );
 
   return (
-    <div className="flex flex-col border border-[#1A1A1A]/10 bg-[#F9F8F6] overflow-hidden">
+    <div className="flex flex-col border border-themeBorder bg-themeCard overflow-hidden">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-[#1A1A1A]/8 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-themeBorder px-4 py-3">
         <div className="flex items-center gap-3">
-          <Terminal className="h-3.5 w-3.5 text-[#6C6863]" strokeWidth={1.5} aria-hidden="true" />
-          <span className="text-[10px] font-medium tracking-[0.25em] uppercase text-[#6C6863]">
+          <Terminal className="h-3.5 w-3.5 text-themeTextMuted" strokeWidth={1.5} aria-hidden="true" />
+          <span className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted">
             Compiler Output
           </span>
           {lines.length > 0 && (
-            <span className="border border-[#1A1A1A]/10 px-2 py-0.5 text-[10px] text-[#6C6863]">
+            <span className="border border-themeBorder px-2 py-0.5 text-[10px] text-themeTextMuted">
               {lines.length} lines
             </span>
           )}
@@ -127,7 +127,7 @@ export default function CompilerLog({ events }: CompilerLogProps) {
             onKeyDown={handleScrollPauseKey}
             aria-pressed={autoScroll}
             aria-label={autoScroll ? "Pause auto-scroll" : "Resume auto-scroll"}
-            className="flex items-center gap-1.5 border border-[#1A1A1A]/15 px-3 py-1.5 text-[10px] font-medium tracking-[0.15em] uppercase text-[#6C6863] transition-colors duration-500 hover:border-[#1A1A1A]/30 hover:text-[#1A1A1A]"
+            className="flex items-center gap-1.5 border border-themeBorder px-3 py-1.5 text-[10px] font-medium tracking-[0.15em] uppercase text-themeTextMuted transition-colors duration-500 hover:border-themeBorderStrong hover:text-themeText"
           >
             {autoScroll ? (
               <Pause className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
@@ -144,7 +144,7 @@ export default function CompilerLog({ events }: CompilerLogProps) {
             onClick={handleCopy}
             aria-label="Copy all log lines to clipboard"
             disabled={lines.length === 0}
-            className="flex items-center gap-1.5 border border-[#1A1A1A]/15 px-3 py-1.5 text-[10px] font-medium tracking-[0.15em] uppercase text-[#6C6863] transition-colors duration-500 hover:border-[#1A1A1A]/30 hover:text-[#1A1A1A] disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 border border-themeBorder px-3 py-1.5 text-[10px] font-medium tracking-[0.15em] uppercase text-themeTextMuted transition-colors duration-500 hover:border-themeBorderStrong hover:text-themeText disabled:opacity-30 disabled:cursor-not-allowed"
           >
             {copied ? (
               <Check className="h-3 w-3 text-emerald-600" strokeWidth={1.5} aria-hidden="true" />
@@ -161,7 +161,7 @@ export default function CompilerLog({ events }: CompilerLogProps) {
         role="log"
         aria-live="polite"
         aria-label="Compiler log output"
-        className="h-64 overflow-y-auto bg-[#1A1A1A] p-4 font-mono text-xs leading-relaxed"
+        className="h-64 overflow-y-auto bg-[#1A1A1A] p-4 font-mono text-xs leading-relaxed text-[#EDE8E2]"
         style={{ fontFamily: "'JetBrains Mono', monospace" }}
       >
         {lines.length === 0 ? (

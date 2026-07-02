@@ -87,7 +87,7 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
     return (
       <p
         role="alert"
-        className="border-l-2 border-red-700 bg-red-50 px-4 py-3 text-sm text-red-700"
+        className="border-l-2 border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-700 dark:text-red-400"
       >
         {error}
       </p>
@@ -144,12 +144,12 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
           {statusStr && (
             <span className="ml-auto">
               {isSuccess ? (
-                <span className="inline-flex items-center gap-1.5 border border-emerald-600/30 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-emerald-700">
+                <span className="inline-flex items-center gap-1.5 border border-emerald-600/20 bg-emerald-500/5 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-emerald-700 dark:text-emerald-400">
                   <CheckCircle className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
                   Completed
                 </span>
               ) : statusStr === "FAILED" ? (
-                <span className="inline-flex items-center gap-1.5 border border-red-600/30 bg-red-50 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-red-700">
+                <span className="inline-flex items-center gap-1.5 border border-red-600/20 bg-red-500/5 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-red-700 dark:text-red-400">
                   <XCircle className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
                   Failed
                 </span>

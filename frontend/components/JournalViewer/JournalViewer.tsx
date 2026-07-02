@@ -15,20 +15,20 @@ interface JournalViewerProps {
 function CompilerBadge({ result }: { result: string }) {
   if (result === "SUCCESS")
     return (
-      <span className="inline-flex items-center gap-1.5 border border-emerald-600/30 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-emerald-700">
+      <span className="inline-flex items-center gap-1.5 border border-emerald-600/20 bg-emerald-500/5 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-emerald-700 dark:text-emerald-400">
         <CheckCircle className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
         Success
       </span>
     );
   if (result === "FAILED")
     return (
-      <span className="inline-flex items-center gap-1.5 border border-red-600/30 bg-red-50 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-red-700">
+      <span className="inline-flex items-center gap-1.5 border border-red-600/20 bg-red-500/5 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-red-700 dark:text-red-400">
         <XCircle className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
         Failed
       </span>
     );
   return (
-    <span className="inline-flex items-center gap-1.5 border border-[#1A1A1A]/10 bg-[#EBE5DE]/40 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-[#6C6863]">
+    <span className="inline-flex items-center gap-1.5 border border-themeBorder bg-themeBgSecondary/30 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-themeTextMuted">
       <Minus className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
       {result}
     </span>
@@ -97,7 +97,7 @@ export default function JournalViewer({
 
   if (error) {
     return (
-      <p role="alert" className="border-l-2 border-red-700 bg-red-50 px-4 py-3 text-sm text-red-700">
+      <p role="alert" className="border-l-2 border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-700 dark:text-red-400">
         {error}
       </p>
     );
@@ -105,7 +105,7 @@ export default function JournalViewer({
 
   if (entries.length === 0) {
     return (
-      <p className="py-4 text-sm italic text-[#6C6863]/60">
+      <p className="py-4 text-sm italic text-themeTextMuted/60">
         No journal entries yet. The journal updates as each workflow state completes.
       </p>
     );
@@ -123,7 +123,7 @@ export default function JournalViewer({
     <div className="space-y-4">
       {/* Refresh button + count */}
       <div className="flex items-center justify-between">
-        <span className="text-[10px] tracking-[0.15em] uppercase text-[#6C6863]/60">
+        <span className="text-[10px] tracking-[0.15em] uppercase text-themeTextMuted/60">
           {entries.length} {entries.length === 1 ? "entry" : "entries"}
         </span>
         <button
@@ -131,7 +131,7 @@ export default function JournalViewer({
           id="journal-refresh-button"
           onClick={() => void fetchJournal()}
           aria-label="Refresh journal"
-          className="flex items-center gap-1.5 border border-[#1A1A1A]/15 px-3 py-1.5 text-[10px] font-medium tracking-[0.15em] uppercase text-[#6C6863] transition-colors duration-500 hover:border-[#1A1A1A]/30 hover:text-[#1A1A1A]"
+          className="flex items-center gap-1.5 border border-themeBorder px-3 py-1.5 text-[10px] font-medium tracking-[0.15em] uppercase text-themeTextMuted transition-colors duration-500 hover:border-themeBorderStrong hover:text-themeText"
         >
           <RefreshCw className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
           Refresh
@@ -142,30 +142,30 @@ export default function JournalViewer({
       {Array.from(attempts.entries()).map(([attempt, group]) => (
         <div
           key={attempt}
-          className="border border-[#1A1A1A]/10 bg-[#F9F8F6] overflow-hidden"
+          className="border border-themeBorder bg-themeCard overflow-hidden"
         >
           {/* Attempt header */}
-          <div className="flex items-center gap-3 border-b border-[#1A1A1A]/8 bg-[#EBE5DE]/40 px-5 py-3">
-            <BookOpen className="h-3.5 w-3.5 text-[#6C6863]" strokeWidth={1.5} aria-hidden="true" />
-            <span className="text-[10px] font-medium tracking-[0.25em] uppercase text-[#6C6863]">
+          <div className="flex items-center gap-3 border-b border-themeBorder bg-themeBgSecondary/30 px-5 py-3">
+            <BookOpen className="h-3.5 w-3.5 text-themeTextMuted" strokeWidth={1.5} aria-hidden="true" />
+            <span className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted">
               Attempt {attempt}
             </span>
           </div>
 
           {/* Entries within this attempt */}
-          <div className="divide-y divide-[#1A1A1A]/8">
+          <div className="divide-y divide-themeBorder">
             {group.map((entry, idx) => (
               <div key={idx} className="space-y-2 px-5 py-4">
                 {/* State + compiler result + timestamp */}
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-mono text-xs text-[#1A1A1A] font-medium"
+                  <span className="font-mono text-xs text-themeText font-medium"
                     style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {entry.workflow_state}
                   </span>
                   <CompilerBadge result={entry.compiler_result} />
                   <time
                     dateTime={entry.timestamp}
-                    className="ml-auto text-[10px] tracking-[0.1em] text-[#6C6863]/60"
+                    className="ml-auto text-[10px] tracking-[0.1em] text-themeTextMuted/60"
                   >
                     {new Date(entry.timestamp).toLocaleTimeString()}
                   </time>
@@ -173,31 +173,31 @@ export default function JournalViewer({
 
                 {/* Analysis summary */}
                 {entry.analysis_summary && (
-                  <p className="text-xs leading-relaxed text-[#6C6863]">
-                    <span className="font-medium text-[#1A1A1A]/60">Analysis: </span>
+                  <p className="text-xs leading-relaxed text-themeTextMuted">
+                    <span className="font-medium text-themeText/60">Analysis: </span>
                     {entry.analysis_summary}
                   </p>
                 )}
 
                 {/* Patch summary */}
                 {entry.patch_summary && (
-                  <p className="text-xs leading-relaxed text-[#6C6863]">
-                    <span className="font-medium text-[#1A1A1A]/60">Patch: </span>
+                  <p className="text-xs leading-relaxed text-themeTextMuted">
+                    <span className="font-medium text-themeText/60">Patch: </span>
                     {entry.patch_summary}
                   </p>
                 )}
 
                 {/* Research summary */}
                 {entry.research_summary && (
-                  <p className="text-xs leading-relaxed text-[#6C6863]">
-                    <span className="font-medium text-[#1A1A1A]/60">Research: </span>
+                  <p className="text-xs leading-relaxed text-themeTextMuted">
+                    <span className="font-medium text-themeText/60">Research: </span>
                     {entry.research_summary}
                   </p>
                 )}
 
                 {/* Files modified */}
                 {entry.files_modified.length > 0 && (
-                  <p className="font-mono text-xs text-[#6C6863]/50"
+                  <p className="font-mono text-xs text-themeTextMuted/50"
                     style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     Modified: {entry.files_modified.join(", ")}
                   </p>

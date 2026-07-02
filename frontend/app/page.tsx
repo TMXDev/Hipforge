@@ -139,11 +139,11 @@ export default function HomePage() {
       <section className="bg-themeDarkSection px-8 py-24 lg:px-16 lg:py-32">
         <div className="mx-auto max-w-[1600px]">
           {/* Section header */}
-          <div className="mb-16 flex items-start justify-between border-b border-themeBorder pb-8">
+          <div className="mb-16 flex items-start justify-between border-b border-themeBorderOnDark pb-8">
             <div>
-              <span className="overline text-themeTextMuted">What We Offer</span>
+              <span className="overline text-themeTextOnDarkMuted">What We Offer</span>
               <h2
-                className="mt-3 font-serif text-3xl font-normal text-themeTextInverted lg:text-5xl"
+                className="mt-3 font-serif text-3xl font-normal text-themeTextOnDark lg:text-5xl"
                 style={{ fontFamily: "'Playfair Display', Georgia, serif" }}
               >
                 Precision at every{" "}
@@ -158,19 +158,19 @@ export default function HomePage() {
               <div
                 key={feature.title}
                 className={[
-                  "border-t border-themeBorder py-10 transition-all duration-700",
+                  "border-t border-themeBorderOnDark py-10 transition-all duration-700",
                   i > 0 ? "sm:pl-10" : "",
-                  i < FEATURES.length - 1 ? "sm:border-r sm:border-themeBorder sm:pr-10" : "",
+                  i < FEATURES.length - 1 ? "sm:border-r sm:border-themeBorderOnDark sm:pr-10" : "",
                 ].join(" ")}
               >
-                <span className="overline text-themeTextMuted">{feature.label}</span>
+                <span className="overline text-themeTextOnDarkMuted">{feature.label}</span>
                 <h3
-                  className="mt-4 font-serif text-2xl font-normal text-themeTextInverted lg:text-3xl"
+                  className="mt-4 font-serif text-2xl font-normal text-themeTextOnDark lg:text-3xl"
                   style={{ fontFamily: "'Playfair Display', Georgia, serif" }}
                 >
                   {feature.title}
                 </h3>
-                <p className="mt-4 text-sm leading-relaxed text-themeTextMuted">
+                <p className="mt-4 text-sm leading-relaxed text-themeTextOnDarkMuted">
                   {feature.description}
                 </p>
               </div>
@@ -237,9 +237,9 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1600px]">
           <div className="flex flex-col items-start gap-10 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <span className="overline text-themeTextMuted">Ready to migrate?</span>
+              <span className="overline text-themeTextOnDarkMuted">Ready to migrate?</span>
               <h2
-                className="mt-4 max-w-2xl font-serif text-4xl font-normal leading-tight text-themeTextInverted lg:text-6xl"
+                className="mt-4 max-w-2xl font-serif text-4xl font-normal leading-tight text-themeTextOnDark lg:text-6xl"
                 style={{ fontFamily: "'Playfair Display', Georgia, serif" }}
               >
                 Begin your{" "}
@@ -252,8 +252,8 @@ export default function HomePage() {
               <Link
                 href="/upload"
                 id="cta-strip-button"
-                className="btn-primary"
-                style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-primary)" }}
+                className="btn-primary animate-pulse-slow"
+                style={{ backgroundColor: "var(--text-on-dark)", color: "#1A1A1A" }}
               >
                 <span>Upload Your Code</span>
                 <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
@@ -262,7 +262,7 @@ export default function HomePage() {
           </div>
 
           {/* Decorative bottom rule */}
-          <div className="mt-20 border-t border-themeBorder" />
+          <div className="mt-20 border-t border-themeBorderOnDark" />
         </div>
       </section>
     </div>

@@ -197,14 +197,14 @@ export default function Timeline({ migrationId }: TimelineProps) {
       {isFailed && (
         <div
           role="alert"
-          className="mb-8 flex items-center gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3"
+          className="mb-8 flex items-center gap-3 border-l-2 border-red-500/30 bg-red-500/5 px-4 py-3"
         >
           <AlertTriangle
             className="h-4 w-4 shrink-0 text-red-600"
             strokeWidth={1.5}
             aria-hidden="true"
           />
-          <p className="text-sm text-red-700">
+          <p className="text-sm text-red-700 dark:text-red-400">
             Migration failed. Check the stage details below for the error.
           </p>
         </div>
@@ -256,17 +256,17 @@ function ConnectionBadge({
     connecting: {
       icon: Wifi,
       label: "Connecting to live stream…",
-      classes: "border-[#1A1A1A]/15 bg-[#EBE5DE]/40 text-[#6C6863]",
+      classes: "border-themeBorder bg-themeBgSecondary/30 text-themeTextMuted",
     },
     closed: {
       icon: WifiOff,
       label: "Connection lost. Reconnecting…",
-      classes: "border-amber-300/40 bg-amber-50 text-amber-700",
+      classes: "border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400",
     },
     error: {
       icon: WifiOff,
       label: "Stream error. Retrying…",
-      classes: "border-red-200 bg-red-50 text-red-700",
+      classes: "border-red-500/20 bg-red-500/5 text-red-700 dark:text-red-400",
     },
   };
 
