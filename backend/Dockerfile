@@ -8,10 +8,11 @@ WORKDIR /app
 # Add ROCm bin directory to PATH so hipcc and hipify-clang are accessible
 ENV PATH="${PATH}:/opt/rocm/bin"
 
-# Install Python 3, pip, and clean apt caches to keep the image slim
+# Install Python 3, pip, python-is-python3, and clean apt caches to keep the image slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
+    python-is-python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file from backend context
