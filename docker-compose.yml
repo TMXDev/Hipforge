@@ -17,7 +17,6 @@ services:
       - hipforge-network
     environment:
       - REDIS_URL=redis://redis:6379
-      - USE_MOCK_COMPILER=true
     command: |
       python -c "
       try:
@@ -65,7 +64,6 @@ services:
       - hipforge-network
     environment:
       - REDIS_URL=redis://redis:6379
-      - USE_MOCK_COMPILER=true
     command: |
       python -c "
       import os, sys, time

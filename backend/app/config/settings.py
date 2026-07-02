@@ -19,8 +19,8 @@ class Settings:
     FIREWORKS_API_KEY: str = os.getenv("FIREWORKS_API_KEY", "your_fireworks_api_key")
 
     # Pre-hackathon / Mock settings
-    USE_MOCK_AI: bool = os.getenv("USE_MOCK_AI", "true").lower() in ("true", "1", "yes")
-    USE_MOCK_COMPILER: bool = os.getenv("USE_MOCK_COMPILER", "true").lower() in ("true", "1", "yes")
+    USE_MOCK_AI: bool = os.getenv("USE_MOCK_AI", "false").lower() in ("true", "1", "yes")
+    USE_MOCK_COMPILER: bool = os.getenv("USE_MOCK_COMPILER", "false").lower() in ("true", "1", "yes")
 
     # GPU Pinning Configuration
     HIP_VISIBLE_DEVICES: str = os.getenv("HIP_VISIBLE_DEVICES", "0")
