@@ -17,10 +17,22 @@ class Settings:
 
     # AI Infrastructure settings
     FIREWORKS_API_KEY: str = os.getenv("FIREWORKS_API_KEY", "your_fireworks_api_key")
+    FIREWORKS_API_BASE: str = os.getenv("FIREWORKS_API_BASE", "https://api.fireworks.ai/inference/v1")
+    FIREWORKS_MODEL: str = os.getenv(
+        "FIREWORKS_MODEL",
+        "accounts/fireworks/models/qwen2p5-coder-32b-instruct",
+    )
 
-    # Pre-hackathon / Mock settings
-    USE_MOCK_AI: bool = os.getenv("USE_MOCK_AI", "false").lower() in ("true", "1", "yes")
-    USE_MOCK_COMPILER: bool = os.getenv("USE_MOCK_COMPILER", "false").lower() in ("true", "1", "yes")
+    # Toolchain / sandbox settings
+    USE_MOCK_AI: bool = os.getenv("USE_MOCK_AI", "false").lower() == "true"
+    USE_MOCK_COMPILER: bool = os.getenv("USE_MOCK_COMPILER", "false").lower() == "true"
+    SANDBOX_IMAGE: str = os.getenv("HIPFORGE_SANDBOX_IMAGE", "rocm/dev-ubuntu-22.04")
+    ALLOW_RUNSC_FALLBACK: bool = os.getenv("ALLOW_RUNSC_FALLBACK", "true").lower() == "true"
+    REQUIRE_HOST_HIPIFY: bool = os.getenv("REQUIRE_HOST_HIPIFY", "false").lower() == "true"
+    REQUIRE_NINJA: bool = os.getenv("REQUIRE_NINJA", "false").lower() == "true"
+    MIN_FREE_DISK_BYTES: int = int(os.getenv("HIPFORGE_MIN_FREE_DISK_BYTES", str(512 * 1024 * 1024)))
+
+
 
     # GPU Pinning Configuration
     HIP_VISIBLE_DEVICES: str = os.getenv("HIP_VISIBLE_DEVICES", "0")
@@ -56,9 +68,10 @@ class Settings:
             return 100 * 1024 * 1024
 
     def validate(self) -> None:
-        if not self.USE_MOCK_AI:
-            if not self.FIREWORKS_API_KEY or self.FIREWORKS_API_KEY.strip() in ("", "your_fireworks_api_key"):
-                raise ValueError("FIREWORKS_API_KEY must be set to a valid key in non-mock mode.")
+        if not self.USE_MOCK_AI and (
+            not self.FIREWORKS_API_KEY
+            or self.FIREWORKS_API_KEY.strip() in ("", "your_fireworks_api_key")
+        ):
+            raise ValueError("FIREWORKS_API_KEY must be set to a valid Fireworks API key.")
 
 settings = Settings()
-settings.validate()

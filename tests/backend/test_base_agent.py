@@ -20,13 +20,8 @@ import time
 
 import pytest
 
-# Force mock mode for all tests in this file before any app imports
-os.environ["USE_MOCK_AI"] = "true"
-os.environ["USE_MOCK_COMPILER"] = "true"
-
 from app.agents.base_agent import (
     FireworksClient,
-    MockFireworksClient,
     _backoff_delay,
     get_ai_client,
     MAX_RETRIES,
@@ -75,29 +70,24 @@ def assert_valid_completion(result: dict):
 class TestFactory:
     """get_ai_client() must return the correct client based on USE_MOCK_AI."""
 
-    def test_returns_mock_when_use_mock_ai_true(self):
-        os.environ["USE_MOCK_AI"] = "true"
-        # Reload settings to pick up env change
-        import importlib
-        import app.config.settings as settings_mod
-        importlib.reload(settings_mod)
-        # Re-import factory with fresh settings
-        from app.agents.base_agent import get_ai_client as factory
-        client = factory()
-        assert isinstance(client, MockFireworksClient), (
-            f"Expected MockFireworksClient, got {type(client)}"
-        )
+    def test_returns_real_client(self):
+        client = get_ai_client()
+        assert isinstance(client, FireworksClient)
 
     def test_real_client_raises_without_api_key(self):
         """FireworksClient must raise ValueError when API key is placeholder."""
         with pytest.raises(ValueError, match="FIREWORKS_API_KEY"):
             FireworksClient(api_key="your_fireworks_api_key")
 
-    def test_real_client_raises_when_api_key_empty(self):
+    def test_real_client_raises_when_api_key_empty(self, monkeypatch):
+        from app.config.settings import settings
+        monkeypatch.setattr(settings, "FIREWORKS_API_KEY", "")
         with pytest.raises(ValueError, match="FIREWORKS_API_KEY"):
             FireworksClient(api_key="")
 
-    def test_real_client_raises_when_api_key_none(self):
+    def test_real_client_raises_when_api_key_none(self, monkeypatch):
+        from app.config.settings import settings
+        monkeypatch.setattr(settings, "FIREWORKS_API_KEY", "")
         with pytest.raises(ValueError, match="FIREWORKS_API_KEY"):
             FireworksClient(api_key=None)
 
@@ -108,122 +98,7 @@ class TestFactory:
 # The mock IS the active client; it must return a valid completion response.
 # ---------------------------------------------------------------------------
 
-class TestMockFireworksClient:
-    """Gate: chat_completion() returns a valid completion response."""
 
-    @pytest.fixture(autouse=True)
-    def client(self):
-        self.client = MockFireworksClient()
-
-    def test_returns_valid_completion(self):
-        """Gate test: call returns a valid completion response."""
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=make_messages(),
-            max_tokens=512,
-        )
-        assert_valid_completion(result)
-
-    def test_id_is_string(self):
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=make_messages(),
-        )
-        assert isinstance(result["id"], str)
-        assert result["id"].startswith("mock-completion-")
-
-    def test_model_field_echoed(self):
-        model = "accounts/fireworks/models/kimi-k2"
-        result = self.client.chat_completion(model=model, messages=make_messages())
-        assert result["model"] == model
-
-    def test_finish_reason_is_stop(self):
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=make_messages(),
-        )
-        assert result["choices"][0]["finish_reason"] == "stop"
-
-    def test_usage_tokens_are_non_negative(self):
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=make_messages("System.", "User message."),
-        )
-        usage = result["usage"]
-        assert usage["prompt_tokens"] >= 0
-        assert usage["completion_tokens"] >= 0
-        assert usage["total_tokens"] >= 0
-
-    def test_content_is_parseable_json(self):
-        """Mock responses embed JSON content — it must be valid JSON."""
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=make_messages("You perform analysis of root cause.", "Analyze this."),
-        )
-        content = result["choices"][0]["message"]["content"]
-        # Should be valid JSON for all agent-type responses
-        parsed = json.loads(content)
-        assert isinstance(parsed, dict)
-
-    def test_analysis_agent_response_detected(self):
-        """Mock must return analysis response when system prompt mentions analysis."""
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=[
-                {"role": "system", "content": "You identify the root cause of compilation errors via analysis."},
-                {"role": "user", "content": "Why did compilation fail?"},
-            ],
-        )
-        content = json.loads(result["choices"][0]["message"]["content"])
-        assert "root_cause" in content
-        assert "repair_plan" in content
-
-    def test_patch_agent_response_detected(self):
-        """Mock must return patch response when system prompt mentions patch/modify."""
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/kimi-k2",
-            messages=[
-                {"role": "system", "content": "You modify source code to patch compilation errors."},
-                {"role": "user", "content": "Apply the repair plan."},
-            ],
-        )
-        content = json.loads(result["choices"][0]["message"]["content"])
-        assert "modified_files" in content
-        assert "changes" in content
-
-    def test_research_agent_response_detected(self):
-        """Mock must return research response when system prompt mentions research/documentation."""
-        result = self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=[
-                {"role": "system", "content": "Search the documentation and research ROCm migration guides."},
-                {"role": "user", "content": "Find relevant documentation."},
-            ],
-        )
-        content = json.loads(result["choices"][0]["message"]["content"])
-        assert "findings" in content
-        assert "recommended_actions" in content
-
-    def test_completes_in_reasonable_time(self):
-        """Mock should return quickly (simulated delay ≤ 200ms in practice)."""
-        start = time.time()
-        self.client.chat_completion(
-            model="accounts/fireworks/models/qwen2p5-72b-instruct",
-            messages=make_messages(),
-        )
-        elapsed = time.time() - start
-        assert elapsed < 5.0, f"Mock took too long: {elapsed:.2f}s"
-
-    def test_multiple_calls_produce_unique_ids(self):
-        """Each call must return a unique completion ID."""
-        ids = set()
-        for _ in range(5):
-            result = self.client.chat_completion(
-                model="accounts/fireworks/models/qwen2p5-72b-instruct",
-                messages=make_messages(),
-            )
-            ids.add(result["id"])
-        assert len(ids) >= 1, "IDs must be generated per call"
 
 
 # ---------------------------------------------------------------------------

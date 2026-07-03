@@ -9,7 +9,7 @@ import CompilerLog from "@/components/CompilerLog";
 import JournalViewer from "@/components/JournalViewer";
 import ReportViewer from "@/components/ReportViewer";
 import { useWebSocket, type StreamEvent } from "@/hooks/useWebSocket";
-import { getDownloadUrl, getMigrationStatus } from "@/services/api";
+import { getDownloadUrl, getMigrationStatus, getCompilerLogs } from "@/services/api";
 
 /**
  * Migration Dashboard page — /migration/[id]
@@ -104,17 +104,45 @@ export default function MigrationPage() {
     onMessage: handleMessage,
   });
 
+  // Fetch existing logs on load or whenever the connection opens
+  useEffect(() => {
+    if (connectionState !== "open") return;
+
+    async function fetchExistingLogs() {
+      try {
+        const logs = await getCompilerLogs(migrationId);
+        // Map logs to StreamEvent-like objects
+        const events: StreamEvent[] = logs.map((log: any) => ({
+          type: "compiler_log",
+          timestamp: log.timestamp,
+          level: log.level,
+          content: log.content,
+        }));
+
+        setAllEvents((prev) => {
+          // Keep all non-compiler_log events
+          const nonLogEvents = prev.filter((e) => e.type !== "compiler_log");
+          // Merge compiler logs
+          return [...events, ...nonLogEvents];
+        });
+      } catch (err) {
+        console.error("Failed to fetch compiler logs:", err);
+      }
+    }
+    void fetchExistingLogs();
+  }, [migrationId, connectionState]);
+
   const downloadUrl = getDownloadUrl(migrationId);
 
   /* ── Status badge colour ── */
   const statusColor =
     migrationStatus === "COMPLETED"
-      ? "text-emerald-600 border-emerald-600/30 bg-emerald-50"
+      ? "text-emerald-600 border-emerald-600/30 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-950/20"
       : migrationStatus === "FAILED"
-        ? "text-red-700 border-red-700/30 bg-red-50"
+        ? "text-red-700 border-red-700/30 bg-red-50 dark:text-red-400 dark:border-red-500/20 dark:bg-red-950/20"
         : migrationStatus === "RUNNING"
-          ? "text-[#D4AF37] border-[#D4AF37]/30"
-          : "text-[#6C6863] border-[#6C6863]/20";
+          ? "text-[#D4AF37] border-[#D4AF37]/30 bg-themeBgSecondary/30"
+          : "text-themeTextMuted border-themeBorder bg-themeBgSecondary/20";
 
   return (
     <div
@@ -183,6 +211,27 @@ export default function MigrationPage() {
                 {migrationStage && migrationStage !== migrationStatus && ` — ${migrationStage}`}
               </span>
 
+              {/* Stop Migration Button */}
+              {!isTerminal && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v1/migrate/${migrationId}/cancel`, {
+                        method: "POST"
+                      });
+                      setMigrationStatus("FAILED");
+                      setIsTerminal(true);
+                    } catch (err) {
+                      console.error("Failed to cancel migration:", err);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 border border-red-700/30 bg-red-500/5 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-red-700 hover:bg-red-500/20 dark:text-red-400 dark:border-red-500/20 transition-all duration-300 cursor-pointer"
+                >
+                  Stop Migration
+                </button>
+              )}
+
               {/* Last updated */}
               {lastUpdated && (
                 <span className="text-[10px] tracking-[0.1em]" style={{ color: "var(--text-muted)", opacity: 0.6 }}>
@@ -239,7 +288,7 @@ export default function MigrationPage() {
               Live Progress
             </h2>
           </div>
-          <Timeline migrationId={migrationId} />
+          <Timeline migrationId={migrationId} events={allEvents} />
         </section>
 
         <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} aria-hidden="true" />

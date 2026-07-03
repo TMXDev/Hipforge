@@ -36,8 +36,11 @@ export interface ApiError {
 export type GpuArchitecture =
   | "gfx1100"
   | "gfx1030"
-  | "gfx906"
+  | "gfx942"
+  | "gfx940"
+  | "gfx941"
   | "gfx90a"
+  | "gfx906"
   | "gfx908";
 
 /** Migration input mode */
@@ -57,4 +60,45 @@ export interface JournalEntry {
   research_summary: string | null;
   files_modified: string[];
   compiler_error_hash: string | null;
+}
+
+export interface DiagnosticCheck {
+  id: string;
+  name: string;
+  status: "pass" | "fail" | "warn" | "skip";
+  critical: boolean;
+  category: string;
+  message: string;
+  recommendation?: string;
+  details?: Record<string, unknown>;
+  duration_ms?: number;
+}
+
+export interface HealthReport {
+  generated_at: string;
+  overall_status: string;
+  health_score: number;
+  readiness: string;
+  healthy: boolean;
+  workspace_path: string;
+  output_dir: string;
+  checks: DiagnosticCheck[];
+  critical_failures: DiagnosticCheck[];
+  installed_components: string[];
+  missing_components: string[];
+  warnings: DiagnosticCheck[];
+  recommended_fixes: string[];
+}
+
+export interface SelfTestReport {
+  generated_at: string;
+  workspace_path: string;
+  target_arch: string;
+  success: boolean;
+  failure_category?: string;
+  steps: Array<{
+    name: string;
+    success: boolean;
+    message: string;
+  }>;
 }

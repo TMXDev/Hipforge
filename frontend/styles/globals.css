@@ -281,6 +281,27 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--lux-warm-grey);
 }
 
+
+/* ── Active Stage Card Pulse Animation ─────────────────────────────── */
+@keyframes active-stage-pulse {
+  0% {
+    background-color: transparent;
+    border-left-color: rgba(212, 175, 55, 0.4);
+  }
+  50% {
+    background-color: rgba(212, 175, 55, 0.05);
+    border-left-color: rgba(212, 175, 55, 1.0);
+  }
+  100% {
+    background-color: transparent;
+    border-left-color: rgba(212, 175, 55, 0.4);
+  }
+}
+
+.animate-active-stage {
+  animation: active-stage-pulse 2s infinite ease-in-out;
+}
+
 /* ── Reduced Motion ───────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   * {

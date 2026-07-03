@@ -2,6 +2,9 @@ from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine import states
 from app.workflow_engine.transitions import determine_next_state
 from app.redis.publisher import publish_event
+import logging
+
+logger = logging.getLogger("workflow_engine")
 
 class WorkflowEngine:
     """
@@ -20,6 +23,7 @@ class WorkflowEngine:
         self.state_registry = {
             "QUEUED": states.handle_queued,
             "PREPARING": states.handle_preparing,
+            "PREFLIGHT": states.handle_preflight,
             "HIPIFY": states.handle_hipify,
             "SCA": states.handle_sca,
             "COMPILING": states.handle_compiling,
@@ -44,6 +48,7 @@ class WorkflowEngine:
             self.state_registry = {
                 "QUEUED": stub_nop,
                 "PREPARING": stub_nop,
+                "PREFLIGHT": stub_nop,
                 "HIPIFY": stub_nop,
                 "SCA": stub_nop,
                 "COMPILING": stub_compiling,
@@ -63,6 +68,15 @@ class WorkflowEngine:
         """
         previous_state = None
         while self.context.current_state is not None:
+            # Check if cancelled by user
+            from app.redis.client import redis_client
+            is_cancelled = await redis_client.get(f"migration:{self.context.migration_id}:cancelled")
+            if is_cancelled == "true" or is_cancelled == b"true" or is_cancelled == "b'true'":
+                logger.info(f"Migration {self.context.migration_id} cancelled by user. Terminating workflow.")
+                self.context.current_state = "FAILED"
+                from app.redis.keys import status_key
+                await redis_client.set(status_key(self.context.migration_id), "FAILED")
+                
             state = self.context.current_state
             
             # Intercept COMPLETED and FAILED states to execute Redis operations
@@ -100,6 +114,17 @@ class WorkflowEngine:
             except Exception as e:
                 success = False
                 error_msg = str(e)
+                if getattr(self.context, "error_category", "NONE") == "NONE":
+                    try:
+                        from app.compiler.error_parser import classify_compiler_error
+                        from app.diagnostics import recommended_next_action
+
+                        self.context.error_category = classify_compiler_error(error_msg)
+                        self.context.recommended_next_action = recommended_next_action(self.context.error_category)
+                        self.context.failure_reason = error_msg
+                    except Exception:
+                        self.context.error_category = "MIGRATION_ERROR"
+                        self.context.failure_reason = error_msg
                 
             if success:
                 # Publish completed event after each state succeeds
@@ -125,5 +150,4 @@ class WorkflowEngine:
             self.context.current_state = next_state
             
         return previous_state
-
 

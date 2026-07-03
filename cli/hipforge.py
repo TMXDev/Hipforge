@@ -1,0 +1,804 @@
+#!/usr/bin/env python3
+import os
+import sys
+import argparse
+import tempfile
+import zipfile
+import asyncio
+import json
+import base64
+import shlex
+from pathlib import Path
+import requests
+import websockets
+
+try:
+    import readline
+except ImportError:
+    try:
+        import pyreadline as readline
+    except ImportError:
+        readline = None
+
+# ANSI colors for premium terminal UI
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    GOLD = '\033[38;5;220m'
+    DARK_GRAY = '\033[90m'
+    PURPLE = '\033[38;5;141m'
+
+# Load simple env from .env if present
+def load_env_file():
+    env_path = Path(".env")
+    if env_path.exists():
+        try:
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k.strip()] = v.strip()
+        except Exception:
+            pass
+
+load_env_file()
+
+# Session Config variables
+default_host = os.getenv("NEXT_PUBLIC_BACKEND_URL", "http://localhost:8000")
+default_arch = os.getenv("DEFAULT_ARCH", "gfx90a")
+try:
+    default_attempts = int(os.getenv("DEFAULT_RETRY_BUDGET", "5"))
+except ValueError:
+    default_attempts = 5
+migration_history = []
+
+def print_step(message: str):
+    print(f"{Colors.BOLD}{Colors.BLUE}[+] {message}{Colors.ENDC}")
+
+def print_success(message: str):
+    print(f"{Colors.BOLD}{Colors.GREEN}[OK] {message}{Colors.ENDC}")
+
+def print_warn(message: str):
+    print(f"{Colors.WARNING}[!] {message}{Colors.ENDC}")
+
+def print_fail(message: str):
+    print(f"{Colors.BOLD}{Colors.FAIL}[X] {message}{Colors.ENDC}")
+
+def _load_backend_diagnostics():
+    """
+    Import backend diagnostics when running from a source checkout. Installed CLI
+    builds without backend sources fall back to the HTTP API.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    backend_path = repo_root / "backend"
+    if backend_path.exists() and str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+    try:
+        from app.diagnostics import run_preflight, run_self_test
+        return run_preflight, run_self_test
+    except Exception:
+        return None, None
+
+def _status_color(status: str) -> str:
+    status = (status or "").lower()
+    if status == "pass":
+        return Colors.GREEN
+    if status == "warn":
+        return Colors.WARNING
+    if status == "fail":
+        return Colors.FAIL
+    return Colors.DARK_GRAY
+
+def print_diagnostic_report(report: dict, verbose: bool = False):
+    print(f"\n{Colors.BOLD}{Colors.GOLD}=== HIPForge Health Check ==={Colors.ENDC}")
+    print(f"  Overall Health Score: {Colors.BOLD}{report.get('health_score', 0)} / 100{Colors.ENDC}")
+    print(f"  Status: {report.get('overall_status', 'unknown')}")
+    print(f"  Estimated Migration Readiness: {report.get('readiness', 'UNKNOWN')}")
+    print(f"  Workspace: {report.get('workspace_path', '-')}")
+
+    missing = report.get("missing_components") or []
+    warnings = report.get("warnings") or []
+    installed = report.get("installed_components") or []
+
+    print(f"\n{Colors.BOLD}Installed Components{Colors.ENDC}")
+    if installed:
+        for name in installed:
+            print(f"  {Colors.GREEN}[OK]{Colors.ENDC} {name}")
+    else:
+        print(f"  {Colors.DARK_GRAY}None detected{Colors.ENDC}")
+
+    print(f"\n{Colors.BOLD}Missing Components{Colors.ENDC}")
+    if missing:
+        for name in missing:
+            print(f"  {Colors.FAIL}[X]{Colors.ENDC} {name}")
+    else:
+        print(f"  {Colors.GREEN}[OK] No missing critical components detected{Colors.ENDC}")
+
+    if warnings:
+        print(f"\n{Colors.BOLD}Warnings{Colors.ENDC}")
+        for item in warnings:
+            print(f"  {Colors.WARNING}[!]{Colors.ENDC} {item.get('name')}: {item.get('message')}")
+
+    fixes = report.get("recommended_fixes") or []
+    print(f"\n{Colors.BOLD}Recommended Fixes{Colors.ENDC}")
+    if fixes:
+        for fix in fixes:
+            print(f"  - {fix}")
+    else:
+        print("  No fixes required.")
+
+    if verbose:
+        print(f"\n{Colors.BOLD}All Checks{Colors.ENDC}")
+        for check in report.get("checks", []):
+            color = _status_color(check.get("status", ""))
+            label = (check.get("status") or "").upper()
+            print(f"  {color}[{label}]{Colors.ENDC} {check.get('name')}: {check.get('message')}")
+
+def run_doctor_command(host_url: str, remote: bool = False, json_output: bool = False, verbose: bool = False) -> bool:
+    report = None
+    if not remote:
+        run_preflight, _ = _load_backend_diagnostics()
+        if run_preflight:
+            report = run_preflight()
+
+    if report is None:
+        response = requests.get(f"{host_url}/api/v1/health/check", timeout=120)
+        response.raise_for_status()
+        report = response.json()
+
+    if json_output:
+        print(json.dumps(report, indent=2))
+    else:
+        print_diagnostic_report(report, verbose=verbose)
+
+    return not bool(report.get("critical_failures"))
+
+def print_self_test_report(report: dict, verbose: bool = False):
+    print(f"\n{Colors.BOLD}{Colors.GOLD}=== HIPForge Self Test ==={Colors.ENDC}")
+    for step in report.get("steps", []):
+        if step.get("success"):
+            print(f"  {Colors.GREEN}[OK]{Colors.ENDC} {step.get('name')}: {step.get('message', '')}")
+        else:
+            print(f"  {Colors.FAIL}[X]{Colors.ENDC} {step.get('name')}: {step.get('message', '')}")
+            if not verbose:
+                break
+    if report.get("success"):
+        print_success("Installation verification passed.")
+    else:
+        print_fail(f"Installation verification failed. Category: {report.get('failure_category', 'UNKNOWN')}")
+
+def run_self_test_command(host_url: str, target_arch: str | None = None, remote: bool = False, json_output: bool = False, verbose: bool = False) -> bool:
+    report = None
+    if not remote:
+        _, run_self_test = _load_backend_diagnostics()
+        if run_self_test:
+            report = run_self_test(target_arch=target_arch)
+
+    if report is None:
+        response = requests.post(f"{host_url}/api/v1/self-test", timeout=180)
+        response.raise_for_status()
+        report = response.json()
+
+    if json_output:
+        print(json.dumps(report, indent=2))
+    else:
+        print_self_test_report(report, verbose=verbose)
+
+    return bool(report.get("success"))
+
+def zip_project(project_path: Path) -> Path:
+    """Zips the target project path recursively into a temporary file."""
+    temp_zip = Path(tempfile.mktemp(suffix=".zip"))
+    print_step(f"Compressing project {project_path.name}...")
+    
+    with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        if project_path.is_file():
+            zipf.write(project_path, project_path.name)
+        else:
+            for file_path in project_path.rglob('*'):
+                if file_path.is_file() and not any(part.startswith('.') for part in file_path.parts):
+                    # Relative path within the zip
+                    rel_path = file_path.relative_to(project_path)
+                    zipf.write(file_path, rel_path)
+                    
+    print_success(f"Compressed into temporary package: {temp_zip.name} ({temp_zip.stat().st_size / 1024:.1f} KB)")
+    return temp_zip
+
+def draw_stage_pipeline(active_stage: str):
+    """Draws a beautiful progress line of the migration workflow stages."""
+    stages = ["QUEUED", "PREPARING", "HIPIFY", "SCA", "COMPILING", "RESEARCHING", "PATCHING", "GENERATING_REPORT"]
+    formatted = []
+    
+    for stage in stages:
+        if stage == active_stage.upper():
+            formatted.append(f"{Colors.BOLD}{Colors.GOLD}[{stage}]{Colors.ENDC}")
+        else:
+            formatted.append(f"{Colors.DARK_GRAY}[{stage}]{Colors.ENDC}")
+            
+    print(f"\rPipeline: {' ──► '.join(formatted)}", end="", flush=True)
+
+async def stream_logs(host_url: str, migration_id: str):
+    """Connects to WebSocket and streams migration logs live."""
+    ws_host = host_url.replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_host}/ws/v1/migrate/{migration_id}/stream"
+    
+    print_step("Connecting to migration event stream...")
+    try:
+        async with websockets.connect(ws_url) as websocket:
+            print_success("Connected to event stream. Streaming live logs...\n")
+            
+            while True:
+                try:
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=5)
+                    except asyncio.TimeoutError:
+                        status_url = f"{host_url}/api/v1/migrate/{migration_id}/status"
+                        try:
+                            poll_resp = requests.get(status_url, timeout=3)
+                            if poll_resp.status_code == 200:
+                                polled_status = (poll_resp.json().get("status") or "").upper()
+                                if polled_status in ("COMPLETED", "FAILED"):
+                                    return polled_status
+                        except Exception:
+                            pass
+                        continue
+                    data = json.loads(message)
+                    
+                    m_type = data.get("type")
+                    if m_type in ("status", "event"):
+                        status = data.get("status")
+                        stage = data.get("stage", status)
+                        msg = data.get("message", "")
+                        print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage}{Colors.ENDC}")
+                        draw_stage_pipeline(stage)
+                        print() # New line after the pipeline draw
+                        if msg:
+                            print(f"  {Colors.GREEN}{msg}{Colors.ENDC}")
+                        stage_upper = (stage or "").upper()
+                        status_upper = (status or "").upper()
+                        if stage_upper in ("COMPLETED", "FAILED") and status_upper in ("COMPLETED", "FAILED"):
+                            return stage_upper
+                        if status_upper in ("COMPLETED", "FAILED"):
+                            return status_upper
+                    elif m_type in ("log", "compiler_log"):
+                        msg = (data.get("message") or data.get("content") or "").strip()
+                        if msg:
+                            if "error" in msg.lower() or "failed" in msg.lower():
+                                print(f"  {Colors.FAIL}{msg}{Colors.ENDC}")
+                            elif "warning" in msg.lower():
+                                print(f"  {Colors.WARNING}{msg}{Colors.ENDC}")
+                            else:
+                                print(f"  {msg}")
+                    elif m_type == "ping":
+                        pass
+                except websockets.ConnectionClosed:
+                    break
+    except Exception as e:
+        print_warn(f"WebSocket logging stream closed or failed: {e}")
+    return None
+
+def download_and_extract(host_url: str, migration_id: str, output_path: Path):
+    """Downloads the completed zip report package and extracts it."""
+    download_url = f"{host_url}/api/v1/migrate/{migration_id}/download"
+    print_step(f"Downloading migration package from {download_url}...")
+    
+    response = requests.get(download_url)
+    if response.status_code != 200:
+        print_fail(f"Download failed with status: {response.status_code}")
+        return False
+        
+    temp_zip = Path(tempfile.mktemp(suffix="_result.zip"))
+    temp_zip.write_bytes(response.content)
+    
+    print_step(f"Extracting package to output directory {output_path}...")
+    output_path.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(temp_zip, 'r') as zipf:
+        zipf.extractall(output_path)
+        
+    if temp_zip.exists():
+        os.remove(temp_zip)
+        
+    print_success(f"Successfully migrated and extracted project to: {output_path.resolve()}")
+    return True
+
+async def run_migration(project_path: Path, target_arch: str, output_path: Path, host_url: str, retry_budget: int = 5):
+    zip_file = None
+    try:
+        zip_file = zip_project(project_path)
+        
+        upload_url = f"{host_url}/api/v1/migrate/upload"
+        print_step(f"Uploading project to {upload_url}...")
+        
+        # Base64 encode the zipped content
+        zip_bytes = zip_file.read_bytes()
+        base64_data = base64.b64encode(zip_bytes).decode('utf-8')
+        
+        filename = project_path.name if project_path.name.endswith('.zip') else (project_path.name + '.zip')
+            
+        payload = {
+            "file": base64_data,
+            "filename": filename,
+            "target_gpu_architecture": target_arch,
+            "retry_budget": retry_budget,
+            "migration_mode": "file"
+        }
+        
+        response = requests.post(upload_url, json=payload)
+            
+        if response.status_code not in (200, 202):
+            print_fail(f"Upload failed: HTTP {response.status_code} - {response.text}")
+            return
+            
+        res_data = response.json()
+        migration_id = res_data.get("migration_id")
+        if not migration_id:
+            print_fail(f"Invalid response from server: {res_data}")
+            return
+            
+        print_success(f"Migration job accepted. ID: {migration_id}")
+        
+        # Store in session history
+        migration_history.append({
+            "id": migration_id,
+            "project": project_path.name,
+            "arch": target_arch
+        })
+        
+        # Check initial status first to avoid blocking on already completed jobs
+        final_status = None
+        try:
+            status_url = f"{host_url}/api/v1/migrate/{migration_id}/status"
+            poll_resp = requests.get(status_url)
+            if poll_resp.status_code == 200:
+                init_status = poll_resp.json().get("status", "")
+                if init_status.upper() in ("COMPLETED", "FAILED"):
+                    final_status = init_status
+        except Exception:
+            pass
+
+        if not final_status:
+            final_status = await stream_logs(host_url, migration_id)
+        
+        if not final_status:
+            print_step("Connection closed. Querying final status...")
+            status_url = f"{host_url}/api/v1/migrate/{migration_id}/status"
+            for _ in range(5):
+                poll_resp = requests.get(status_url)
+                if poll_resp.status_code == 200:
+                    final_status = poll_resp.json().get("status")
+                    if final_status and final_status.upper() in ("COMPLETED", "FAILED"):
+                        break
+                await asyncio.sleep(2)
+                
+        if final_status and final_status.upper() == "COMPLETED":
+            download_and_extract(host_url, migration_id, output_path)
+        else:
+            print_fail(f"Migration pipeline finished with status: {final_status}")
+            
+    finally:
+        if zip_file and zip_file.exists():
+            try:
+                os.remove(zip_file)
+            except Exception:
+                pass
+
+def show_interactive_help():
+    print(f"\n{Colors.BOLD}{Colors.GOLD}=== HIPForge Interactive CLI Commands ==={Colors.ENDC}")
+    print(f"  {Colors.BOLD}/migrate [path] [out_dir] [--arch <arch>] [--attempts <num>] [--host <url>]{Colors.ENDC}")
+    print(f"      Migrates your project. Run without arguments to start the interactive wizard.")
+    print(f"  {Colors.BOLD}/cancel <migration_id> [--host <url>]{Colors.ENDC}")
+    print(f"      Aborts an actively running migration immediately.")
+    print(f"  {Colors.BOLD}/status <migration_id> [--host <url>]{Colors.ENDC}")
+    print(f"      Queries the current status of a migration.")
+    print(f"  {Colors.BOLD}/set <key> <value>{Colors.ENDC}")
+    print(f"      Changes session settings. Keys: `host`, `arch`, `attempts`.")
+    print(f"      {Colors.DARK_GRAY}Example: /set arch gfx942{Colors.ENDC}")
+    print(f"  {Colors.BOLD}/info{Colors.ENDC}")
+    print(f"      Validates backend server connection, prints status and list of default values.")
+    print(f"  {Colors.BOLD}/doctor [--remote] [--json] [--verbose]{Colors.ENDC}")
+    print(f"      Runs the full HIPForge environment health check.")
+    print(f"  {Colors.BOLD}/self-test [--arch <arch>] [--remote] [--json] [--verbose]{Colors.ENDC}")
+    print(f"      Runs the official installation verification project.")
+    print(f"  {Colors.BOLD}/history{Colors.ENDC}")
+    print(f"      Shows recent migrations executed in this session.")
+    print(f"  {Colors.BOLD}/clear{Colors.ENDC}")
+    print(f"      Clears the terminal screen.")
+    print(f"  {Colors.BOLD}/help{Colors.ENDC}")
+    print(f"      Displays this commands manual.")
+    print(f"  {Colors.BOLD}/exit{Colors.ENDC} or {Colors.BOLD}/quit{Colors.ENDC}")
+    print(f"      Exit the interactive console.\n")
+
+def run_interactive_cli():
+    global default_host, default_arch, default_attempts
+    
+    if readline:
+        commands = ["/migrate", "/cancel", "/status", "/set", "/info", "/doctor", "/self-test", "/history", "/clear", "/help", "/exit", "/quit"]
+        configs = ["host", "arch", "attempts"]
+        architectures = ["gfx906", "gfx908", "gfx90a", "gfx940", "gfx941", "gfx942", "gfx1030", "gfx1100"]
+
+        def completer(text, state):
+            try:
+                buffer = readline.get_line_buffer()
+                words = shlex.split(buffer) if buffer else []
+            except Exception:
+                words = []
+                buffer = ""
+
+            options = []
+            
+            if not buffer or buffer.startswith("/"):
+                if not words or (len(words) == 1 and not buffer.endswith(" ")):
+                    options = [cmd for cmd in commands if cmd.startswith(text)]
+                else:
+                    cmd = words[0].lower()
+                    if cmd == "/set":
+                        if len(words) == 2 and not buffer.endswith(" "):
+                            options = [cfg for cfg in configs if cfg.startswith(text)]
+                        elif len(words) == 3 or (len(words) == 2 and buffer.endswith(" ")):
+                            key = words[1].lower()
+                            if key == "arch":
+                                options = [arch for arch in architectures if arch.startswith(text)]
+                    elif cmd == "/migrate":
+                        if text.startswith("-"):
+                            flags = ["--arch", "--attempts", "--host"]
+                            options = [f for f in flags if f.startswith(text)]
+                        elif len(words) >= 2:
+                            prev = words[-2].lower()
+                            if prev == "--arch":
+                                options = [arch for arch in architectures if arch.startswith(text)]
+                                
+            if state < len(options):
+                return options[state]
+            return None
+
+        readline.set_completer(completer)
+        readline.parse_and_bind("tab: complete")
+    
+    # Try to clear screen on launch
+    os.system('cls' if os.name == 'nt' else 'clear')
+    
+    print(f"{Colors.BOLD}{Colors.PURPLE}    __  ______________________                     {Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.PURPLE}   / / / /  _/ __ \\____  ____/___  _________ _____{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.PURPLE}  / /_/ // // /_/ / __ `/ __ `/ __ \\/ ___/ __ `/ _ \\{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.PURPLE} / __  // // ____/ /_/ / /_/ / /_/ / /  / /_/ /  __/{Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.PURPLE}/_/ /_/___/_/    \\__, /\\__, /\\____/_/   \\__, /\\___/ {Colors.ENDC}")
+    print(f"{Colors.BOLD}{Colors.PURPLE}                /____//____/           /____/       {Colors.ENDC}")
+    print(f"                  {Colors.GOLD}Premium Command Console v0.1.0{Colors.ENDC}\n")
+    print(f"Type {Colors.BOLD}/help{Colors.ENDC} for commands list, or {Colors.BOLD}/exit{Colors.ENDC} to exit.\n")
+    
+    while True:
+        try:
+            line = input(f"{Colors.BOLD}{Colors.BLUE}hipforge>{Colors.ENDC} ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting.")
+            break
+            
+        if not line:
+            continue
+            
+        if line.lower() in ("/exit", "/quit"):
+            print("Exiting.")
+            break
+            
+        if line.lower() == "/help":
+            show_interactive_help()
+            continue
+            
+        if line.lower() == "/clear":
+            os.system('cls' if os.name == 'nt' else 'clear')
+            continue
+            
+        if line.lower() == "/history":
+            if not migration_history:
+                print_warn("No migrations run in this session yet.")
+            else:
+                print(f"\n{Colors.BOLD}{Colors.GOLD}=== Migration History ==={Colors.ENDC}")
+                for idx, item in enumerate(migration_history, 1):
+                    print(f"  [{idx}] ID: {item['id']} | Project: {item['project']} | Arch: {item['arch']}")
+                print()
+            continue
+
+        if line.lower() == "/info":
+            print(f"\n{Colors.BOLD}{Colors.GOLD}=== Console Environment Info ==={Colors.ENDC}")
+            print(f"  Backend Host: {default_host}")
+            print(f"  Default Arch: {default_arch}")
+            print(f"  Retry Budget: {default_attempts} attempts")
+            
+            # Ping backend
+            try:
+                resp = requests.get(f"{default_host}/api/v1/migrate/upload", timeout=3)
+                # Upload accepts POST, GET will return 405 Method Not Allowed but means backend is online!
+                if resp.status_code in (200, 405):
+                    print_success("Backend Server connection is ONLINE.")
+                else:
+                    print_warn(f"Backend Server returned status code: {resp.status_code}")
+            except Exception as e:
+                print_fail(f"Backend Server is OFFLINE: {e}")
+            print()
+            continue
+
+        if line.startswith("/doctor"):
+            parts = shlex.split(line)
+            doctor_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+            doctor_parser.add_argument("--host", type=str, default=default_host)
+            doctor_parser.add_argument("--remote", action="store_true")
+            doctor_parser.add_argument("--json", action="store_true")
+            doctor_parser.add_argument("--verbose", action="store_true")
+            try:
+                doctor_args = doctor_parser.parse_args(parts[1:])
+                ok = run_doctor_command(
+                    doctor_args.host,
+                    remote=doctor_args.remote,
+                    json_output=doctor_args.json,
+                    verbose=doctor_args.verbose,
+                )
+                if not ok:
+                    print_warn("Doctor found blocking issues.")
+            except Exception as e:
+                print_fail(f"Doctor failed: {e}")
+            continue
+
+        if line.startswith("/self-test"):
+            parts = shlex.split(line)
+            self_test_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+            self_test_parser.add_argument("--host", type=str, default=default_host)
+            self_test_parser.add_argument("--arch", type=str, default=None)
+            self_test_parser.add_argument("--remote", action="store_true")
+            self_test_parser.add_argument("--json", action="store_true")
+            self_test_parser.add_argument("--verbose", action="store_true")
+            try:
+                self_args = self_test_parser.parse_args(parts[1:])
+                ok = run_self_test_command(
+                    self_args.host,
+                    target_arch=self_args.arch,
+                    remote=self_args.remote,
+                    json_output=self_args.json,
+                    verbose=self_args.verbose,
+                )
+                if not ok:
+                    print_warn("Self-test failed.")
+            except Exception as e:
+                print_fail(f"Self-test failed: {e}")
+            continue
+
+        if line.startswith("/set"):
+            parts = shlex.split(line)
+            if len(parts) < 3:
+                print_fail("Usage: /set <key> <value> (keys: host, arch, attempts)")
+                continue
+            key = parts[1].lower()
+            val = parts[2]
+            
+            if key == "host":
+                default_host = val
+                print_success(f"Default Host updated to: {default_host}")
+            elif key == "arch":
+                default_arch = val
+                print_success(f"Default Architecture updated to: {default_arch}")
+            elif key == "attempts":
+                if val.isdigit():
+                    default_attempts = int(val)
+                    print_success(f"Default Attempts Budget updated to: {default_attempts}")
+                else:
+                    print_fail("Error: Attempts must be an integer.")
+            else:
+                print_fail(f"Unknown config key: {key}. Supported: host, arch, attempts")
+            continue
+
+        if line.startswith("/cancel"):
+            parts = shlex.split(line)
+            if len(parts) < 2:
+                print_fail("Usage: /cancel <migration_id> [--host <host_url>]")
+                continue
+            
+            cancel_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+            cancel_parser.add_argument("migration_id", type=str)
+            cancel_parser.add_argument("--host", type=str, default=default_host)
+            
+            try:
+                cancel_args = cancel_parser.parse_args(parts[1:])
+                url = f"{cancel_args.host}/api/v1/migrate/{cancel_args.migration_id}/cancel"
+                resp = requests.post(url)
+                if resp.status_code == 200:
+                    print_success(f"Cancelled migration: {cancel_args.migration_id}")
+                else:
+                    print_fail(f"Cancel failed: HTTP {resp.status_code} - {resp.text}")
+            except Exception as e:
+                print_fail(f"Invalid /cancel command syntax. Use /help.")
+            continue
+
+        if line.startswith("/migrate"):
+            parts = shlex.split(line)
+            parts.pop(0) # remove /migrate
+            
+            if not parts:
+                # Launch the interactive wizard setup!
+                print(f"\n{Colors.BOLD}{Colors.GOLD}─── HIPForge Migration Setup Assistant ───{Colors.ENDC}")
+                path_input = input(f"{Colors.BOLD}[1/4] Path to project folder or file:{Colors.ENDC} ").strip()
+                if not path_input:
+                    print_fail("Aborted: Project path is required.")
+                    continue
+                proj_path = Path(path_input)
+                if not proj_path.exists():
+                    print_fail(f"Aborted: Target path '{proj_path}' does not exist.")
+                    continue
+                    
+                output_input = input(f"{Colors.BOLD}[2/4] Output folder path for results:{Colors.ENDC} ").strip()
+                if not output_input:
+                    print_fail("Aborted: Output folder is required.")
+                    continue
+                out_path = Path(output_input)
+                
+                print(f"{Colors.BOLD}[3/4] Select Target AMD GPU Architecture:{Colors.ENDC}")
+                print("  [1] gfx906 (Vega 20)")
+                print("  [2] gfx908 (CDNA 1 / MI100)")
+                print("  [3] gfx90a (CDNA 2 / MI200) [Default]")
+                print("  [4] gfx940 (CDNA 3 / MI300A)")
+                print("  [5] gfx941 (CDNA 3 / MI300X)")
+                print("  [6] gfx942 (CDNA 3 / MI300)")
+                print("  [7] gfx1030 (RDNA 2 / RX 6000)")
+                print("  [8] gfx1100 (RDNA 3 / RX 7000)")
+                arch_choice = input(f"{Colors.BOLD}Choice [1-8, or type custom arch name]:{Colors.ENDC} ").strip()
+                arch_map = {
+                    "1": "gfx906",
+                    "2": "gfx908",
+                    "3": "gfx90a",
+                    "4": "gfx940",
+                    "5": "gfx941",
+                    "6": "gfx942",
+                    "7": "gfx1030",
+                    "8": "gfx1100"
+                }
+                arch = arch_map.get(arch_choice, arch_choice if arch_choice else default_arch)
+                
+                attempts_input = input(f"{Colors.BOLD}[4/4] Error repair attempts budget [default {default_attempts}]:{Colors.ENDC} ").strip()
+                attempts = int(attempts_input) if attempts_input.isdigit() else default_attempts
+                
+                print_step(f"Executing Wizard Migration: {proj_path} -> {out_path} (Arch: {arch}, Attempts: {attempts})")
+                asyncio.run(run_migration(proj_path, arch, out_path, default_host, attempts))
+                continue
+            
+            # Non-interactive command parsed from args
+            mig_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+            mig_parser.add_argument("path", type=str)
+            mig_parser.add_argument("output", type=str)
+            mig_parser.add_argument("--arch", type=str, default=default_arch)
+            mig_parser.add_argument("--attempts", type=int, default=default_attempts)
+            mig_parser.add_argument("--host", type=str, default=default_host)
+            
+            try:
+                mig_args = mig_parser.parse_args(parts)
+                proj_path = Path(mig_args.path)
+                out_path = Path(mig_args.output)
+                if not proj_path.exists():
+                    print_fail(f"Error: Target path '{proj_path}' does not exist.")
+                    continue
+                    
+                print_step(f"Starting migration: {proj_path} -> {out_path} (target: {mig_args.arch}, budget: {mig_args.attempts})")
+                asyncio.run(run_migration(proj_path, mig_args.arch, out_path, mig_args.host, mig_args.attempts))
+            except Exception as e:
+                print_fail(f"Invalid /migrate command syntax. Use /help to check options.")
+            continue
+            
+        if line.startswith("/status"):
+            parts = shlex.split(line)
+            if len(parts) < 2:
+                print_fail("Usage: /status <migration_id> [--host <host_url>]")
+                continue
+            
+            stat_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+            stat_parser.add_argument("migration_id", type=str)
+            stat_parser.add_argument("--host", type=str, default=default_host)
+            
+            try:
+                stat_args = stat_parser.parse_args(parts[1:])
+                url = f"{stat_args.host}/api/v1/migrate/{stat_args.migration_id}/status"
+                resp = requests.get(url)
+                if resp.status_code == 200:
+                    status_info = resp.json()
+                    print_success(f"Status for {stat_args.migration_id}: {status_info.get('status')}")
+                else:
+                    print_fail(f"Failed to fetch status: HTTP {resp.status_code} - {resp.text}")
+            except Exception as e:
+                print_fail(f"Invalid /status command syntax. Use /help.")
+            continue
+            
+        print_warn(f"Unknown command '{line}'. Type /help for available commands.")
+
+def main():
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            h_out = kernel32.GetStdHandle(-11) # STD_OUTPUT_HANDLE
+            if h_out != -1:
+                mode = ctypes.c_uint()
+                if kernel32.GetConsoleMode(h_out, ctypes.byref(mode)):
+                    # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+                    kernel32.SetConsoleMode(h_out, mode.value | 0x0004)
+        except Exception:
+            pass
+
+    parser = argparse.ArgumentParser(
+        description=f"{Colors.HEADER}HIPForge CLI Tool — Automate CUDA to ROCm/HIP Migrations{Colors.ENDC}"
+    )
+    subparsers = parser.add_subparsers(dest="command", help="CLI Subcommands")
+    
+    # Subcommand: start
+    start_parser = subparsers.add_parser("start", help="Launch interactive Claude-like shell")
+    
+    # Subcommand: migrate
+    migrate_parser = subparsers.add_parser("migrate", help="Run direct migration (B2B/Non-interactive)")
+    migrate_parser.add_argument("project_path", type=str, help="Path to CUDA file or folder to migrate")
+    migrate_parser.add_argument("--arch", type=str, default="gfx90a", help="Target AMD GPU architecture (default: gfx90a)")
+    migrate_parser.add_argument("--attempts", type=int, default=5, help="Number of retry budget attempts (default: 5)")
+    migrate_parser.add_argument("--output", type=str, required=True, help="Output directory for translated project")
+    migrate_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL (default: http://localhost:8000)")
+
+    # Subcommand: doctor
+    doctor_parser = subparsers.add_parser("doctor", help="Run full environment diagnostics")
+    doctor_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL for remote fallback")
+    doctor_parser.add_argument("--remote", action="store_true", help="Force using the backend health endpoint")
+    doctor_parser.add_argument("--json", action="store_true", help="Print raw JSON diagnostics")
+    doctor_parser.add_argument("--verbose", action="store_true", help="Print every individual check")
+
+    # Subcommand: self-test
+    self_test_parser = subparsers.add_parser("self-test", help="Run official HIPForge installation verification")
+    self_test_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL for remote fallback")
+    self_test_parser.add_argument("--arch", type=str, default=None, help="Optional target AMD GPU architecture")
+    self_test_parser.add_argument("--remote", action="store_true", help="Force using the backend self-test endpoint")
+    self_test_parser.add_argument("--json", action="store_true", help="Print raw JSON self-test output")
+    self_test_parser.add_argument("--verbose", action="store_true", help="Print every self-test step")
+    
+    args = parser.parse_args()
+    
+    if args.command == "start":
+        run_interactive_cli()
+    elif args.command == "migrate":
+        project_path = Path(args.project_path)
+        output_path = Path(args.output)
+        
+        if not project_path.exists():
+            print_fail(f"Error: Target path '{project_path}' does not exist.")
+            sys.exit(1)
+            
+        asyncio.run(
+            run_migration(project_path, args.arch, output_path, args.host, args.attempts)
+        )
+    elif args.command == "doctor":
+        try:
+            ok = run_doctor_command(
+                args.host,
+                remote=args.remote,
+                json_output=args.json,
+                verbose=args.verbose,
+            )
+        except Exception as e:
+            print_fail(f"Doctor failed: {e}")
+            sys.exit(2)
+        sys.exit(0 if ok else 1)
+    elif args.command == "self-test":
+        try:
+            ok = run_self_test_command(
+                args.host,
+                target_arch=args.arch,
+                remote=args.remote,
+                json_output=args.json,
+                verbose=args.verbose,
+            )
+        except Exception as e:
+            print_fail(f"Self-test failed: {e}")
+            sys.exit(2)
+        sys.exit(0 if ok else 1)
+    else:
+        # Default behavior: if no args or invalid subcommand, start interactive shell
+        run_interactive_cli()
+
+if __name__ == "__main__":
+    main()

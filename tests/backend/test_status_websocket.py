@@ -226,11 +226,11 @@ async def test_websocket_stream_events(redis_test_client):
     print("[Test] Connection established! Publishing stages...")
     
     expected_stages = [
-        "QUEUED", "PREPARING", "HIPIFY", "SCA", "COMPILING",
+        "QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING",
         "ANALYZING", "PATCHING", "RESEARCHING", "GENERATING_REPORT", "COMPLETED"
     ]
     
-    # Publish all 10 stages
+    # Publish all lifecycle stages
     for stage in expected_stages:
         print(f"[Test] Publishing stage {stage}...")
         await publish_event(
@@ -250,5 +250,4 @@ async def test_websocket_stream_events(redis_test_client):
     except asyncio.TimeoutError:
         print("[Test] TIMEOUT waiting for client thread future!")
         raise
-
 

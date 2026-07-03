@@ -34,6 +34,7 @@ The PATCHING state handler is responsible for writing it to disk.
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from app.agents.base_agent import get_ai_client
@@ -44,7 +45,7 @@ logger = logging.getLogger("patch_agent")
 # Model selection (per docs/04_TECHNOLOGY_DECISIONS.md)
 # Kimi K2 is optimized for code generation and editing.
 # ---------------------------------------------------------------------------
-PATCH_MODEL = "accounts/fireworks/models/kimi-k2p6"
+PATCH_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/qwen2p5-coder-32b-instruct")
 
 # ---------------------------------------------------------------------------
 # Prompt template — exact 6-section structure from docs/09_AI_AGENTS.md
@@ -69,6 +70,8 @@ Rules you must follow:
 - Preserve ALL existing formatting, indentation, and whitespace conventions.
 - Preserve ALL working code that is not related to the identified error.
 - Generate the MINIMAL patch required to address the compiler error.
+- Pay special attention to thread-grouping portability: Do not hardcode warp/wavefront sizes (like 32 or 64). Instead, use the built-in 'warpSize' variable inside device kernels. For host-side queries, retrieve it from the device properties using 'hipGetDeviceProperties' (i.e. 'prop.warpSize').
+- When patching warp shuffle/ballot operations (like __shfl_sync, __ballot_sync), represent mask values as 64-bit unsigned integers (uint64_t) to ensure clean execution across AMD CDNA (64-thread) and RDNA (32-thread) architectures.
 - Do NOT add unsolicited optimizations, comments, or features.
 - Do NOT remove functionality that compiles correctly.
 - Do NOT repeat a fix that is already recorded in the Migration Journal as failed.
@@ -177,31 +180,27 @@ def _extract_source(raw_content: str, original_source: str) -> str:
     Extract the corrected source code from the AI response.
 
     The Patch Agent is instructed to return raw source, but may occasionally
-    wrap it in code fences. Strip them if present.
+    wrap it in code fences (potentially preceded by conversational preambles).
+    Extract the code block if code fences are present, stripping language tags.
 
     Returns the extracted source code string.
     Raises ValueError if the response appears to be empty.
     """
     content = raw_content.strip()
 
-    # Strip markdown code fences if the model disobeys the prompt
-    if content.startswith("```"):
-        lines = content.splitlines()
-        # Remove the opening fence (first line: ```hip, ```cpp, or ```)
-        # and the closing fence (last non-empty line: ```)
-        inner_lines = []
-        in_fence = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("```") and not in_fence:
-                in_fence = True
-                continue
-            if stripped == "```" and in_fence:
-                in_fence = False
-                continue
-            if in_fence:
-                inner_lines.append(line)
-        content = "\n".join(inner_lines).strip()
+    # Strip markdown code fences if they are present anywhere in the raw content
+    if "```" in content:
+        parts = content.split("```")
+        if len(parts) >= 3:
+            code_block = parts[1]
+            # Strip language identifier from the first line if present
+            lines = code_block.splitlines()
+            if lines:
+                first_line = lines[0].strip().lower()
+                if first_line in ("hip", "cpp", "cuda", "cuh", "cl", "opencl", "c", "c++", "cxx") or \
+                   first_line.startswith("hip") or first_line.startswith("cuda") or first_line.startswith("cpp"):
+                    code_block = "\n".join(lines[1:])
+            content = code_block.strip()
 
     if not content:
         raise ValueError(

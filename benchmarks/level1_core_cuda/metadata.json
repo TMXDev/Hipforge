@@ -1,0 +1,44 @@
+{
+  "suite": "HIPForge CUDA Migration Adversarial Benchmarks",
+  "level": 1,
+  "project": "level1_core_cuda",
+  "difficulty_rating": "Level 1 of 6",
+  "estimated_migration_difficulty": {
+    "hipify": {
+      "score": 3,
+      "scale": 10,
+      "rationale": "Runtime API conversion should be mostly direct, but streams, events, pinned memory, managed memory, and wrappers must survive intact."
+    },
+    "compiler": {
+      "score": 3,
+      "scale": 10,
+      "rationale": "The code uses standard CUDA C++17 with cross-file declarations and CMake CUDA language support."
+    },
+    "ai_repair": {
+      "score": 4,
+      "scale": 10,
+      "rationale": "Repair agents may hallucinate allocation replacements, remove synchronization, or alter validation-sensitive kernel behavior."
+    },
+    "human_engineer": {
+      "score": 2,
+      "scale": 10,
+      "rationale": "A human GPU engineer should recognize each construct, but runtime validation still catches careless edits."
+    }
+  },
+  "cuda_features_exercised": [
+    "vector_add",
+    "reduction",
+    "prefix_sum",
+    "histogram",
+    "matrix_multiplication",
+    "shared_memory",
+    "streams",
+    "events",
+    "pinned_memory",
+    "unified_memory",
+    "cross_file_kernels",
+    "cmake_cuda_language"
+  ],
+  "expected_success_line": "ALL LEVEL 1 CUDA CHECKS PASSED"
+}
+

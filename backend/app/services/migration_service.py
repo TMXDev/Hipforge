@@ -54,8 +54,20 @@ async def initiate_migration(
     # 1. Create workspace
     workspace_path = create_workspace(migration_id)
     
-    # 2. Write source file
-    content = decode_file_content(file_content)
+    # 2. Write source file (keep binary for ZIPs, decode as string for others)
+    if filename.lower().endswith(".zip"):
+        import base64
+        file_str = file_content
+        if "," in file_str and (file_str.startswith("data:") or "base64" in file_str.split(",")[0]):
+            file_str = file_str.split(",", 1)[1]
+        try:
+            content = base64.b64decode(file_str.strip())
+        except Exception as e:
+            logger.error(f"Failed to decode zip content: {e}")
+            content = file_content.encode("utf-8")
+    else:
+        content = decode_file_content(file_content)
+        
     write_source_file(migration_id, filename, content)
     
     # 3. Set Redis status to QUEUED

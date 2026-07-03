@@ -30,8 +30,8 @@ async def download_migration_package(migration_id: str):
     except Exception:
         raise HTTPException(status_code=404, detail="Migration workspace not found")
 
-    # 3. Validation: status must be COMPLETED (if status key exists)
-    if redis_status and redis_status != "COMPLETED":
+    # 3. Validation: status must be COMPLETED or FAILED (if status key exists)
+    if redis_status and redis_status not in ("COMPLETED", "FAILED"):
         raise HTTPException(status_code=404, detail="Migration is not complete")
 
     if not zip_path.exists():

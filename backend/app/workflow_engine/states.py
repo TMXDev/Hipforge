@@ -13,6 +13,7 @@ Rule (per AGENT_RULES.md Rule 10):
 
 import logging
 import os
+import json
 from pathlib import Path
 
 from app.workflow_engine.context import WorkflowContext
@@ -29,6 +30,74 @@ async def handle_queued(context: WorkflowContext) -> str:
 
 
 async def handle_preparing(context: WorkflowContext) -> str:
+    import zipfile
+    workspace = Path(context.workspace_path)
+    input_dir = workspace / "input"
+    
+    zip_files = list(input_dir.glob("*.zip"))
+    for zip_path in zip_files:
+        logger.info("[PREPARING] Extracting ZIP archive: %s", zip_path)
+        try:
+            with zipfile.ZipFile(zip_path, "r") as z:
+                z.extractall(input_dir)
+            zip_path.unlink()  # Clean up the zip file
+        except Exception as e:
+            logger.error("[PREPARING] Failed to extract zip: %s", e)
+            raise RuntimeError(f"PREPARING failed to extract zip: {e}")
+            
+    return "PREFLIGHT"
+
+
+async def handle_preflight(context: WorkflowContext) -> str:
+    """
+    Runs environment diagnostics after input preparation and before any migration
+    tool is launched. Critical failures abort before HIPIFY, COMPILING, or AI.
+    """
+    from app.diagnostics import (
+        preflight_failure_message,
+        recommended_next_action,
+        run_preflight,
+    )
+
+    logger.info("[PREFLIGHT] Running environment validation for %s", context.migration_id)
+
+    try:
+        from app.redis.client import redis_client
+        from app.redis.keys import metadata_key
+
+        metadata = await redis_client.hgetall(metadata_key(context.migration_id))
+        target_arch = metadata.get("target_architecture") if isinstance(metadata, dict) else None
+        if target_arch:
+            context.target_gpu_architecture = target_arch
+    except Exception as exc:
+        logger.warning("[PREFLIGHT] Failed to read migration metadata: %s", exc)
+
+    report = run_preflight(workspace_path=context.workspace_path, require_ai=True)
+    context.preflight_report = report
+
+    artifacts_dir = Path(context.workspace_path) / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    report_path = artifacts_dir / "preflight_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    critical_failures = report.get("critical_failures", [])
+    if critical_failures:
+        first = critical_failures[0]
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = first.get("category") or "ENVIRONMENT_ERROR"
+        context.failure_reason = preflight_failure_message(report)
+        context.last_compile_stderr = context.failure_reason
+        context.recommended_next_action = recommended_next_action(context.error_category, report)
+        logger.error("[PREFLIGHT] Validation failed: %s", context.failure_reason)
+        raise RuntimeError(context.failure_reason)
+
+    context.error_category = "NONE"
+    logger.info(
+        "[PREFLIGHT] Validation passed. health_score=%s readiness=%s",
+        report.get("health_score"),
+        report.get("readiness"),
+    )
     return "HIPIFY"
 
 
@@ -41,15 +110,15 @@ async def handle_preparing(context: WorkflowContext) -> str:
 
 async def handle_hipify(context: WorkflowContext) -> str:
     """
-    Runs hipify-clang (or mock) on the input CUDA source file.
+    Runs hipify-clang (or mock) on the input CUDA source files recursively.
 
-    Expects the source file to live at:
-        workspace_path/input/<any .cu file>
+    Expects the source files to live at:
+        workspace_path/input/...
 
-    Writes the translated HIP file to:
-        workspace_path/generated/<stem>.hip
+    Writes the translated HIP files to:
+        workspace_path/generated/...
 
-    Stores the output path in context.hipify_output_path.
+    Stores the primary output path in context.hipify_output_path.
     Raises RuntimeError on hipify failure, which drives the state machine
     to the GENERATING_REPORT (failure) path.
     """
@@ -60,35 +129,67 @@ async def handle_hipify(context: WorkflowContext) -> str:
     generated_dir = workspace / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
-    # Locate the first .cu or .hip file in the input directory.
-    source_file: Path | None = None
-    for ext in (".cu", ".hip", ".cpp", ".cuh"):
-        candidates = list(input_dir.glob(f"*{ext}"))
-        if candidates:
-            source_file = candidates[0]
-            break
+    # Locate all files recursively in the input directory.
+    all_files = [p for p in input_dir.rglob("*") if p.is_file()]
+    
+    source_files = []
+    other_files = []
+    
+    supported_extensions = (".cu", ".hip", ".cpp", ".cuh", ".hpp", ".h")
+    for p in all_files:
+        if p.suffix.lower() in supported_extensions:
+            source_files.append(p)
+        else:
+            other_files.append(p)
 
-    if source_file is None:
+    if not source_files:
         raise RuntimeError(
             f"HIPIFY: no supported source file found in {input_dir}. "
             "Expected at least one .cu / .hip / .cpp / .cuh file."
         )
 
-    output_path = generated_dir / (source_file.stem + ".hip")
+    # Copy all other non-supported files directly to the generated directory
+    import shutil
+    for src in other_files:
+        rel_path = src.relative_to(input_dir)
+        dest = generated_dir / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        logger.info("[HIPIFY] Copied non-supported file directly: %s -> %s", src, dest)
 
-    logger.info(
-        "[HIPIFY] Translating %s -> %s", source_file, output_path
-    )
+    # Process all discovered source files recursively
+    primary_output_path = None
+    for src in source_files:
+        rel_path = src.relative_to(input_dir)
+        dest = generated_dir / rel_path
+        
+        # Change file extension from .cu to .hip
+        if dest.suffix.lower() == ".cu":
+            dest = dest.with_suffix(".hip")
+            
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        
+        logger.info("[HIPIFY] Translating %s -> %s", src, dest)
+        result = run_hipify(str(src), str(dest))
+        
+        if not result["success"]:
+            error_detail = result.get("stderr") or "hipify-clang returned failure"
+            logger.error("[HIPIFY] Translation failed on %s: %s", src, error_detail)
+            raise RuntimeError(f"HIPIFY failed on {src.name}: {error_detail}")
+            
+        if primary_output_path is None:
+            primary_output_path = result["output_path"]
 
-    result = run_hipify(str(source_file), str(output_path))
+    context.hipify_output_path = primary_output_path
+    
+    # Run validation and deterministic replacement step immediately after hipify completes
+    try:
+        from app.compiler.validator import validate_and_replace_cuda_apis
+        await validate_and_replace_cuda_apis(context)
+    except Exception as e:
+        logger.exception("[HIPIFY] Validation stage failed: %s", e)
 
-    if not result["success"]:
-        error_detail = result.get("stderr") or "hipify-clang returned failure"
-        logger.error("[HIPIFY] Translation failed: %s", error_detail)
-        raise RuntimeError(f"HIPIFY failed: {error_detail}")
-
-    context.hipify_output_path = result["output_path"]
-    logger.info("[HIPIFY] Translation succeeded: %s", context.hipify_output_path)
+    logger.info("[HIPIFY] Translation succeeded. Primary path: %s", context.hipify_output_path)
     return "SCA"
 
 
@@ -176,16 +277,24 @@ async def handle_compiling(context: WorkflowContext) -> str:
     logs_dir = workspace / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Determine source file: prefer hipify output, fall back to generated/
-    hip_source = context.hipify_output_path
-    if not hip_source or not Path(hip_source).exists():
-        candidates = list(generated_dir.glob("*.hip"))
-        if candidates:
-            hip_source = str(candidates[0])
-        else:
-            # Last resort: check input/ for .hip files
-            candidates = list((workspace / "input").glob("*.hip"))
-            hip_source = str(candidates[0]) if candidates else None
+    # Determine source file: check if there's a Makefile first
+    hip_source = None
+    for makefile_name in ("Makefile", "makefile"):
+        makefiles = list(generated_dir.rglob(makefile_name))
+        if makefiles:
+            hip_source = str(makefiles[0])
+            break
+            
+    if not hip_source:
+        hip_source = context.hipify_output_path
+        if not hip_source or not Path(hip_source).exists():
+            candidates = list(generated_dir.rglob("*.hip"))
+            if candidates:
+                hip_source = str(candidates[0])
+            else:
+                # Last resort: check input/ for .hip files
+                candidates = list((workspace / "input").rglob("*.hip"))
+                hip_source = str(candidates[0]) if candidates else None
 
     if not hip_source:
         logger.error("[COMPILING] No HIP source file found to compile.")
@@ -214,16 +323,28 @@ async def handle_compiling(context: WorkflowContext) -> str:
     except Exception as exc:
         logger.warning("[COMPILING] Failed to read target architecture from Redis: %s", exc)
 
-    result = run_hipcc(hip_source, binary_path, target_arch=target_arch)
+    result = run_hipcc(hip_source, binary_path, target_arch=target_arch, workspace_path=context.workspace_path)
 
     # Stream compile output to client over WebSocket via compiler_channel Redis channel
     try:
-        from app.redis.keys import compiler_channel
+        from app.redis.keys import compiler_channel, compiler_log_key
         from app.redis.client import redis_client
         import json
         from datetime import datetime, timezone
         
         channel = compiler_channel(context.migration_id)
+        log_list_key = compiler_log_key(context.migration_id)
+        
+        # Publish and store compilation attempt header
+        header_payload = {
+            "type": "compiler_log",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": "INFO",
+            "content": f"=== HIPForge Compile Attempt {attempt_num} ==="
+        }
+        await redis_client.publish(channel, json.dumps(header_payload))
+        await redis_client.rpush(log_list_key, json.dumps(header_payload))
+
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
         
@@ -236,6 +357,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
                     "content": line
                 }
                 await redis_client.publish(channel, json.dumps(payload))
+                await redis_client.rpush(log_list_key, json.dumps(payload))
                 
         for line in stderr.splitlines():
             if line.strip():
@@ -246,8 +368,9 @@ async def handle_compiling(context: WorkflowContext) -> str:
                     "content": line
                 }
                 await redis_client.publish(channel, json.dumps(payload))
+                await redis_client.rpush(log_list_key, json.dumps(payload))
     except Exception as exc:
-        logger.warning("[COMPILING] Failed to publish compilation stream: %s", exc)
+        logger.warning("[COMPILING] Failed to publish and store compilation stream: %s", exc)
 
     # Persist compiler log (logs are never overwritten per spec)
     with open(log_path, "w", encoding="utf-8") as f:
@@ -261,16 +384,90 @@ async def handle_compiling(context: WorkflowContext) -> str:
     logger.info("[COMPILING] Log written to %s", log_path)
 
     # Store results in context
-    context.compilation_success = result["success"]
-    context.compiler_errors = result.get("errors", [])
-    context.last_compile_stderr = result.get("stderr", "")
+    comp_ok = result["success"]
+    compiler_errors = result.get("errors", [])
+    last_stderr = result.get("stderr", "")
 
-    if result["success"]:
+    if comp_ok:
+        logger.info("[COMPILING] Compilation succeeded on attempt %d. Commencing Semantic Post-Validation...", attempt_num)
+        try:
+            from app.compiler.sca import analyze
+            from app.models.compiler_error import CompilerError
+            
+            sca_result = analyze(hip_source)
+            issues = sca_result.get("issues", [])
+            high_severity_issues = [iss for iss in issues if iss.severity == "high"]
+            
+            if high_severity_issues:
+                logger.warning(
+                    "[COMPILING] Semantic Post-Validation failed: %d High-severity semantic compatibility issue(s) detected.",
+                    len(high_severity_issues)
+                )
+                comp_ok = False
+                
+                # Convert CompatibilityIssue objects to CompilerError models
+                semantic_errors = []
+                for iss in high_severity_issues:
+                    # Construct clean CompilerError
+                    sem_err = CompilerError(
+                        file=iss.file or hip_source,
+                        line=iss.line if iss.line is not None else 1,
+                        column=iss.column if iss.column is not None else 1,
+                        message=f"Semantic Validation Error: {iss.description} Recommendation: {iss.recommendation}",
+                        code=iss.pattern_id
+                    )
+                    semantic_errors.append(sem_err)
+                
+                compiler_errors = semantic_errors
+                last_stderr = "Semantic Post-Validation failed: " + "; ".join([e.message for e in semantic_errors])
+                
+                # Stream these errors to the client compiler logs over websocket so they see the semantic errors!
+                try:
+                    from app.redis.keys import compiler_channel, compiler_log_key
+                    from app.redis.client import redis_client
+                    import json
+                    from datetime import datetime, timezone
+                    
+                    channel = compiler_channel(context.migration_id)
+                    log_list_key = compiler_log_key(context.migration_id)
+                    
+                    for err in semantic_errors:
+                        payload = {
+                            "type": "compiler_log",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "level": "ERROR",
+                            "content": f"Semantic Validation Error [{err.code}]: {err.message} at line {err.line}"
+                        }
+                        await redis_client.publish(channel, json.dumps(payload))
+                        await redis_client.rpush(log_list_key, json.dumps(payload))
+                except Exception as ws_exc:
+                    logger.warning("[COMPILING] Failed to stream semantic errors: %s", ws_exc)
+            else:
+                logger.info("[COMPILING] Semantic Post-Validation succeeded.")
+        except Exception as sca_exc:
+            logger.error("[COMPILING] Semantic Post-Validation failed with exception: %s", sca_exc)
+
+    context.compilation_success = comp_ok
+    context.compiler_errors = compiler_errors
+    context.last_compile_stderr = last_stderr
+
+    # Check for infrastructure/system compilation failures to prevent calling AI agents
+    if not comp_ok:
+        from app.compiler.error_parser import classify_compiler_error
+        category = classify_compiler_error(last_stderr)
+        context.error_category = category
+        if category != "USER_CODE_ERROR":
+            logger.error("[COMPILING] Non-code compile error detected: %s. Aborting to report generation.", category)
+            context.infrastructure_error = True
+    else:
+        context.error_category = "NONE"
+
+    if context.compilation_success:
         logger.info("[COMPILING] Compilation succeeded on attempt %d.", attempt_num)
     else:
         error_count = len(context.compiler_errors)
         logger.warning(
-            "[COMPILING] Compilation failed on attempt %d: %d structured error(s).",
+            "[COMPILING] Compilation and/or Semantic Validation failed on attempt %d: %d structured error(s).",
             attempt_num, error_count,
         )
 
@@ -286,32 +483,88 @@ async def handle_compiling(context: WorkflowContext) -> str:
 async def handle_analyzing(context: WorkflowContext) -> str:
     """
     Runs the Analysis Agent on the most recent compilation failure.
-
-    Reads from context:
-        hipify_output_path  — the HIP source file to analyse
-        compiler_errors     — structured errors from handle_compiling
-        last_compile_stderr — raw stderr for additional context
-        current_attempt     — zero-indexed attempt counter
-        migration_journal   — prior attempt records (may be empty)
-
-    Writes to context:
-        analysis_result     — structured Analysis Agent output dict
-        migration_journal   — appends a new journal entry for this attempt
-
-    On success: transitions to PATCHING.
-    On failure (invalid JSON / API exhausted): raises RuntimeError so the
-    state machine drives the job to GENERATING_REPORT via the failure path.
     """
+    # ── Safeguards ──────────────────────────────────────────────────────────
+    stderr_val = context.last_compile_stderr or ""
+    
+    from app.compiler.error_parser import classify_compiler_error
+    classification = classify_compiler_error(stderr_val)
+    context.error_category = classification
+
+    # Safeguard 1: Stop immediately on non-code errors
+    if classification != "USER_CODE_ERROR":
+        logger.error("[ANALYZING] Non-code/toolchain error detected: %s. Stopping immediately.", classification)
+        context.infrastructure_error = True
+        context.analysis_result = {
+            "confidence": 0.0,
+            "root_cause": f"Compilation failed due to a {classification} issue: {stderr_val}",
+            "repair_plan": []
+        }
+        raise RuntimeError(f"Compilation failed due to environment/toolchain issue: {classification}")
+
+    # Safeguard 2: Detect repeated errors
+    def are_compiler_errors_identical(errors1, errors2) -> bool:
+        if not errors1 and not errors2:
+            return False
+        if len(errors1) != len(errors2):
+            return False
+        for e1, e2 in zip(errors1, errors2):
+            msg1 = e1.message if hasattr(e1, "message") else e1.get("message", "") if isinstance(e1, dict) else str(e1)
+            msg2 = e2.message if hasattr(e2, "message") else e2.get("message", "") if isinstance(e2, dict) else str(e2)
+            line1 = e1.line if hasattr(e1, "line") else e1.get("line", 0) if isinstance(e1, dict) else 0
+            line2 = e2.line if hasattr(e2, "line") else e2.get("line", 0) if isinstance(e2, dict) else 0
+            col1 = e1.column if hasattr(e1, "column") else e1.get("column", 0) if isinstance(e1, dict) else 0
+            col2 = e2.column if hasattr(e2, "column") else e2.get("column", 0) if isinstance(e2, dict) else 0
+            if msg1 != msg2 or line1 != line2 or col1 != col2:
+                return False
+        return True
+
+    prev_errors = getattr(context, "previous_compiler_errors", None)
+    errors_are_identical = False
+    if prev_errors is not None:
+        errors_are_identical = are_compiler_errors_identical(context.compiler_errors, prev_errors)
+
+    if (getattr(context, "previous_compile_stderr", None) == context.last_compile_stderr and stderr_val != "") or errors_are_identical:
+        logger.warning("[ANALYZING] Same compiler error detected twice in a row. Aborting pipeline.")
+        context.infrastructure_error = True
+        context.error_category = "MIGRATION_ERROR"
+        context.analysis_result = {
+            "confidence": 0.0,
+            "root_cause": "Compilation failed with the exact same error twice in a row. Infinite loop prevented.",
+            "repair_plan": []
+        }
+        raise RuntimeError("Compilation failed with the exact same error twice in a row. Infinite loop prevented.")
+
+    # Save current stderr/errors to detect repetitions in future iterations
+    context.previous_compile_stderr = context.last_compile_stderr
+    context.previous_compiler_errors = context.compiler_errors
+    # ────────────────────────────────────────────────────────────────────────
+
     from app.agents.analysis_agent import analyze
 
-    # Read source code from the translated HIP file
+    # Read optimized semantic slice around the compiler error
     hip_source_path = context.hipify_output_path
     source_code = ""
     if hip_source_path:
         try:
-            source_code = Path(hip_source_path).read_text(encoding="utf-8", errors="replace")
+            # Determine line number of the first compiler error
+            error_line = 1
+            if context.compiler_errors:
+                first_error = context.compiler_errors[0]
+                if hasattr(first_error, "line"):
+                    error_line = getattr(first_error, "line")
+                elif isinstance(first_error, dict) and "line" in first_error:
+                    error_line = first_error["line"]
+            
+            from app.compiler.ast_slicing import get_optimized_error_context
+            source_code = get_optimized_error_context(hip_source_path, error_line)
+            logger.info("[ANALYZING] Extracted semantic slice around line %d for token optimization.", error_line)
         except Exception as exc:
-            logger.warning("[ANALYZING] Could not read HIP source: %s", exc)
+            logger.warning("[ANALYZING] Could not get semantic context, falling back to full source: %s", exc)
+            try:
+                source_code = Path(hip_source_path).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
     logger.info(
         "[ANALYZING] Starting analysis for attempt %d with %d error(s)",
@@ -418,6 +671,13 @@ async def handle_patching(context: WorkflowContext) -> str:
         previous_patches=context.patch_history,
     )
 
+    # Prevent infinite loop if the patch agent doesn't modify the source code
+    if patched_source.strip() == source_code.strip():
+        logger.warning("[PATCHING] Patch Agent returned unchanged source code. Infinite loop prevented.")
+        context.infrastructure_error = True
+        context.error_category = "AI_ERROR"
+        raise RuntimeError("Patch Agent returned unchanged source code. Infinite loop prevented.")
+
     # ── Write patched file to workspace ─────────────────────────────────
     patch_path.write_text(patched_source, encoding="utf-8")
 
@@ -441,6 +701,7 @@ async def handle_patching(context: WorkflowContext) -> str:
     # Point the next COMPILING stage at the patched file
     context.hipify_output_path = str(patch_path)
     context.patched_source_path = str(patch_path)
+    context.patch_metadata = metadata
 
     # Track patch history so future Patch Agent calls can avoid repeating changes
     context.patch_history.append(patched_source)

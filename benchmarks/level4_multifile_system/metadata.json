@@ -1,0 +1,25 @@
+{
+  "suite": "HIPForge CUDA Migration Adversarial Benchmarks",
+  "level": 4,
+  "project": "level4_multifile_system",
+  "difficulty_rating": "Level 4 of 6",
+  "cuda_features_exercised": [
+    "multiple_source_files",
+    "multiple_headers",
+    "nested_includes",
+    "static_libraries",
+    "namespaces",
+    "macro_generated_kernels",
+    "configuration_headers",
+    "cross_file_kernel_launches",
+    "cmake_targets"
+  ],
+  "expected_success_line": "ALL LEVEL 4 CUDA CHECKS PASSED",
+  "estimated_migration_difficulty": {
+    "hipify": {"score": 7, "scale": 10},
+    "compiler": {"score": 8, "scale": 10},
+    "ai_repair": {"score": 8, "scale": 10},
+    "human_engineer": {"score": 6, "scale": 10}
+  }
+}
+

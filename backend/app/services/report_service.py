@@ -77,10 +77,30 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     status = "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED"
     actual_retries = getattr(context, "current_attempt", 0)
+    preflight_report = getattr(context, "preflight_report", None) or {}
+    failure_category = getattr(context, "error_category", "NONE")
+    try:
+        from app.diagnostics import recommended_next_action
+        next_action = getattr(context, "recommended_next_action", "") or recommended_next_action(failure_category, preflight_report)
+    except Exception:
+        next_action = getattr(context, "recommended_next_action", "") or "Run hipforge doctor and inspect the generated diagnostics."
+    preflight_report = getattr(context, "preflight_report", None) or {}
+    failure_category = getattr(context, "error_category", "NONE")
+    try:
+        from app.diagnostics import recommended_next_action
+        next_action = getattr(context, "recommended_next_action", "") or recommended_next_action(failure_category, preflight_report)
+    except Exception:
+        next_action = getattr(context, "recommended_next_action", "") or "Run hipforge doctor and inspect the generated diagnostics."
 
-    # Calculate timestamps
+    # Calculate timestamps and duration
+    import time
     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
     start_time = getattr(context, "start_time", now_str)
+    
+    start_time_secs = getattr(context, "start_time_secs", None)
+    duration_seconds = 0.0
+    if start_time_secs:
+        duration_seconds = round(time.time() - start_time_secs, 2)
     
     # original files
     input_dir = workspace_path / "input"
@@ -100,6 +120,8 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
             except Exception:
                 pass
 
+    journal = getattr(context, "migration_journal", [])
+
     # Build markdown report content
     lines = [
         f"# HIPForge Migration Report",
@@ -113,7 +135,13 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Retry Budget**: `{getattr(context, 'retry_budget', 0)}`",
         f"- **Actual Retries**: `{actual_retries}`",
         f"",
-        f"## 2. Input Project Details",
+        f"## 2. Environment Summary",
+        f"- **Pre-flight Status**: `{preflight_report.get('overall_status', 'not recorded')}`",
+        f"- **Health Score**: `{preflight_report.get('health_score', 'n/a')}`",
+        f"- **Readiness**: `{preflight_report.get('readiness', 'n/a')}`",
+        f"- **Critical Environment Failures**: `{len(preflight_report.get('critical_failures', []))}`",
+        f"",
+        f"## 3. Input Project Details",
         f"- **Original Files Uploaded**:"
     ]
     
@@ -123,7 +151,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 3. Translation Summary",
+        f"## 4. Translation Summary",
         f"- **hipify-clang Status**: `SUCCESS`" if getattr(context, "hipify_output_path", None) else "- **hipify-clang Status**: `FAILED` / `SKIPPED`"
     ])
 
@@ -139,7 +167,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 4. Compilation History",
+        f"## 5. Compilation History",
     ])
     if log_summaries:
         lines.extend(log_summaries)
@@ -148,11 +176,19 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 5. AI Agent Activity",
+        f"## 6. AI Usage Summary",
+    ])
+
+    ai_requests = len([entry for entry in journal if entry.get("analysis_summary") or entry.get("patch_summary") or entry.get("research_summary")])
+    lines.append(f"- **AI Requests Recorded**: `{ai_requests}`")
+    lines.append("- **Token Usage**: `not captured by current client instrumentation`")
+
+    lines.extend([
+        f"",
+        f"## 7. AI Agent Activity",
     ])
     
     # Summarize from Migration Journal
-    journal = getattr(context, "migration_journal", [])
     if journal:
         for idx, entry in enumerate(journal):
             lines.append(f"### Attempt {entry.get('attempt', idx + 1)}")
@@ -165,6 +201,40 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
                 lines.append(f"- **Research Summary**: {entry.get('research_summary')}")
     else:
         lines.append("- No AI Agent interactions recorded.")
+
+    # 8. Migration Metrics & Validation
+    lines.extend([
+        f"",
+        f"## 8. Migration Metrics & Validation",
+        f"- **CUDA APIs Detected**: `{getattr(context, 'cuda_apis_detected', 0)}`",
+        f"- **CUDA APIs Automatically Converted**: `{getattr(context, 'cuda_apis_converted', 0)}`",
+        f"- **Remaining CUDA APIs**: `{getattr(context, 'cuda_apis_remaining', 0)}`",
+        f"- **Files Modified**: `{len(getattr(context, 'files_modified', []))}` files",
+        f"- **Number of Patch Iterations**: `{actual_retries}`",
+        f"- **Compile Success/Failure**: `{status}`",
+        f"- **Error Category**: `{failure_category}`",
+        f"- **Total Migration Duration**: `{duration_seconds}s`",
+        f"",
+        f"## 9. Final Summary",
+        f"- **Environment Summary**: `{preflight_report.get('readiness', 'n/a')}`",
+        f"- **Migration Summary**: `{status}`",
+        f"- **Compile Summary**: `{'SUCCESS' if getattr(context, 'compilation_success', False) else 'FAILED or SKIPPED'}`",
+        f"- **Repair Iterations**: `{actual_retries}`",
+        f"- **Elapsed Time**: `{duration_seconds}s`",
+        f"- **Failure Category**: `{failure_category}`",
+        f"- **Recommended Next Action**: {next_action}"
+    ])
+    
+    initial_apis = getattr(context, 'initial_cuda_apis_detail', {})
+    remaining_apis = getattr(context, 'remaining_cuda_apis_detail', {})
+    if initial_apis:
+        lines.append(f"  - *Initial CUDA APIs Breakdown*:")
+        for api, count in initial_apis.items():
+            lines.append(f"    - `{api}`: {count} occurrence(s)")
+    if remaining_apis:
+        lines.append(f"  - *Remaining CUDA APIs Breakdown*:")
+        for api, count in remaining_apis.items():
+            lines.append(f"    - `{api}`: {count} occurrence(s)")
 
     try:
         report_file.write_text("\n".join(lines), encoding="utf-8")
@@ -186,8 +256,14 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     status = "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED"
     actual_retries = getattr(context, "current_attempt", 0)
 
+    import time
     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
     start_time = getattr(context, "start_time", now_str)
+    
+    start_time_secs = getattr(context, "start_time_secs", None)
+    duration_seconds = 0.0
+    if start_time_secs:
+        duration_seconds = round(time.time() - start_time_secs, 2)
 
     # 1. Migration Summary
     summary = {
@@ -195,7 +271,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "status": status,
         "start_time": start_time,
         "end_time": now_str,
-        "duration_seconds": 0.0,  # can calculate in future
+        "duration_seconds": duration_seconds,
         "input_method": "single_file",
         "target_gpu_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
         "retry_budget": getattr(context, "retry_budget", 0),
@@ -276,6 +352,19 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
             "patch_summaries": patch_summaries,
             "research_summaries": research_summaries
         },
+        "migration_metrics": {
+            "cuda_apis_detected": getattr(context, "cuda_apis_detected", 0),
+            "cuda_apis_converted": getattr(context, "cuda_apis_converted", 0),
+            "cuda_apis_remaining": getattr(context, "cuda_apis_remaining", 0),
+            "files_modified_count": len(getattr(context, "files_modified", [])),
+            "files_modified": getattr(context, "files_modified", []),
+            "patch_iterations": actual_retries,
+            "compile_success": getattr(context, "compilation_success", False),
+            "error_category": getattr(context, "error_category", "NONE"),
+            "total_migration_duration_seconds": duration_seconds,
+            "initial_cuda_apis_detail": getattr(context, "initial_cuda_apis_detail", {}),
+            "remaining_cuda_apis_detail": getattr(context, "remaining_cuda_apis_detail", {})
+        },
         "migration_journal_excerpt": journal,
         "generated_artifacts": [
             "generated/",
@@ -289,9 +378,45 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "performance_profiling": {}
     }
 
+    report_data["environment_summary"] = {
+        "preflight_status": preflight_report.get("overall_status"),
+        "health_score": preflight_report.get("health_score"),
+        "readiness": preflight_report.get("readiness"),
+        "critical_failures": preflight_report.get("critical_failures", []),
+        "warnings": preflight_report.get("warnings", []),
+        "recommended_fixes": preflight_report.get("recommended_fixes", []),
+    }
+    report_data["final_summary"] = {
+        "environment_summary": preflight_report.get("readiness", "n/a"),
+        "migration_summary": status,
+        "compile_summary": "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED or SKIPPED",
+        "ai_usage_summary": {
+            "requests_recorded": len(analysis_summaries) + len(patch_summaries) + len(research_summaries),
+            "token_usage": "not captured by current client instrumentation",
+        },
+        "repair_iterations": actual_retries,
+        "elapsed_time_seconds": duration_seconds,
+        "failure_category": failure_category,
+        "recommended_next_action": next_action,
+    }
+
+    def make_serializable(obj):
+        if hasattr(obj, "model_dump"):
+            return make_serializable(obj.model_dump())
+        if hasattr(obj, "dict") and callable(obj.dict):
+            return make_serializable(obj.dict())
+        if isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [make_serializable(x) for x in obj]
+        if isinstance(obj, tuple):
+            return tuple(make_serializable(x) for x in obj)
+        return obj
+
     try:
+        serializable_report = make_serializable(report_data)
         with open(json_file, "w", encoding="utf-8") as f:
-            json.dump(report_data, f, indent=2)
+            json.dump(serializable_report, f, indent=2)
         logger.info("[ReportService] JSON report generated: %s", json_file)
     except Exception as exc:
         logger.error("[ReportService] Failed to write JSON report: %s", exc)
@@ -390,7 +515,7 @@ async def build_zip(migration_id: str) -> None:
         logger.error("[ReportService] Failed to create README.txt: %s", exc)
 
     # Folders to package into zip
-    target_dirs = ["generated", "patches", "logs", "reports"]
+    target_dirs = ["generated", "patches", "logs", "artifacts", "reports"]
 
     try:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_f:

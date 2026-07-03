@@ -65,7 +65,12 @@ export default function CompilerLog({ events }: CompilerLogProps) {
       }));
 
     if (newLines.length > 0) {
-      setLines((prev) => [...prev, ...newLines]);
+      setLines((prev) => {
+        const filteredNew = newLines.filter(
+          (nl) => !prev.some((pl) => pl.timestamp === nl.timestamp && pl.content === nl.content)
+        );
+        return [...prev, ...filteredNew];
+      });
     }
   }, [events]);
 

@@ -35,8 +35,11 @@ const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const GPU_ARCHITECTURES: { value: GpuArchitecture; label: string }[] = [
   { value: "gfx1100", label: "RDNA 3 — gfx1100 (RX 7000 series)" },
   { value: "gfx1030", label: "RDNA 2 — gfx1030 (RX 6000 series)" },
+  { value: "gfx942", label: "CDNA 3 — gfx942 (MI300 series)" },
+  { value: "gfx940", label: "CDNA 3 — gfx940 (MI300A)" },
+  { value: "gfx941", label: "CDNA 3 — gfx941 (MI300X)" },
   { value: "gfx90a", label: "CDNA 2 — gfx90a (MI200 series)" },
-  { value: "gfx906", label: "CDNA 1 — gfx906 (MI100 / Vega 20)" },
+  { value: "gfx906", label: "Vega 20 / MI50 — gfx906" },
   { value: "gfx908", label: "CDNA 1 — gfx908 (MI100)" },
 ];
 
@@ -422,14 +425,14 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
           <div
             role="alert"
             id="upload-validation-error"
-            className="flex items-start gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3"
+            className="flex items-start gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3 dark:border-red-500/50 dark:bg-red-950/20"
           >
             <AlertCircle
-              className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
+              className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400"
               strokeWidth={1.5}
               aria-hidden="true"
             />
-            <p className="text-sm text-red-700">{validationError}</p>
+            <p className="text-sm text-red-700 dark:text-red-400">{validationError}</p>
           </div>
         )}
 
@@ -517,18 +520,18 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
           <div
             role="alert"
             id="upload-submit-error"
-            className="flex items-start gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3"
+            className="flex items-start gap-3 border-l-2 border-red-700 bg-red-50 px-4 py-3 dark:border-red-500/50 dark:bg-red-950/20"
           >
             <AlertCircle
-              className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
+              className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400"
               strokeWidth={1.5}
               aria-hidden="true"
             />
             <div>
-              <p className="text-sm font-medium text-red-700">
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">
                 Submission Failed
               </p>
-              <p className="mt-0.5 text-xs text-red-600/80">{submitError}</p>
+              <p className="mt-0.5 text-xs text-red-600/80 dark:text-red-400/80">{submitError}</p>
             </div>
           </div>
         )}

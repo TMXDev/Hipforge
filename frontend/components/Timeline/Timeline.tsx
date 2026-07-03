@@ -10,6 +10,7 @@ import { getJournal } from "@/services/api";
 interface TimelineProps {
   /** The migration UUID being tracked */
   migrationId: string;
+  events?: StreamEvent[];
 }
 
 /** Builds the initial pending stage map */
@@ -46,7 +47,7 @@ function resolveStage(event: StreamEvent): JobState | null {
  * status in real time: pending → active (started) → completed or failed.
  * Automatically reconnects if the connection drops.
  */
-export default function Timeline({ migrationId }: TimelineProps) {
+export default function Timeline({ migrationId, events = [] }: TimelineProps) {
   const [stages, setStages] = useState<Map<JobState, StageState>>(
     buildInitialStages
   );
@@ -235,6 +236,7 @@ export default function Timeline({ migrationId }: TimelineProps) {
                 meta={meta}
                 stage={displayStage}
                 isLast={index === stageList.length - 1}
+                events={events}
               />
             </div>
           );

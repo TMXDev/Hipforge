@@ -1,0 +1,28 @@
+{
+  "suite": "HIPForge CUDA Migration Adversarial Benchmarks",
+  "level": 3,
+  "project": "level3_modern_cuda_cpp",
+  "difficulty_rating": "Level 3 of 6",
+  "cuda_features_exercised": [
+    "templates",
+    "template_specialization",
+    "constexpr",
+    "raii",
+    "namespaces",
+    "lambdas",
+    "std_vector",
+    "std_array",
+    "smart_pointers",
+    "move_semantics",
+    "exceptions_outside_kernels",
+    "cxx17"
+  ],
+  "expected_success_line": "ALL LEVEL 3 CUDA CHECKS PASSED",
+  "estimated_migration_difficulty": {
+    "hipify": {"score": 6, "scale": 10},
+    "compiler": {"score": 6, "scale": 10},
+    "ai_repair": {"score": 7, "scale": 10},
+    "human_engineer": {"score": 5, "scale": 10}
+  }
+}
+

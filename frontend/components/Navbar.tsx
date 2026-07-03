@@ -53,6 +53,14 @@ export default function Navbar() {
               <span className="hover-text-primary transition-colors duration-500">Migrate</span>
               <span className="absolute -bottom-1 left-0 h-px w-0 bg-[#D4AF37] transition-all duration-500 group-hover:w-full" />
             </Link>
+            <Link
+              href="/health"
+              className="group relative text-[10px] font-medium tracking-[0.25em] uppercase transition-colors duration-500"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <span className="hover-text-primary transition-colors duration-500">Health</span>
+              <span className="absolute -bottom-1 left-0 h-px w-0 bg-[#D4AF37] transition-all duration-500 group-hover:w-full" />
+            </Link>
             <a
               href="https://github.com"
               target="_blank"

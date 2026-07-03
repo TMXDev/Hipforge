@@ -69,6 +69,20 @@ async def get_migration_status_fallback(migration_id: str):
 async def get_migration_status_fallback_short(migration_id: str):
     return await get_status_logic(migration_id)
 
+@router.get("/api/v1/migrate/{migration_id}/compiler-logs", response_model=list)
+async def get_compiler_logs_v1(migration_id: str):
+    validate_migration_id(migration_id)
+    from app.redis.client import redis_client
+    from app.redis.keys import compiler_log_key
+    
+    c_key = compiler_log_key(migration_id)
+    logs_raw = await redis_client.lrange(c_key, 0, -1)
+    return [json.loads(line) for line in logs_raw]
+
+@router.get("/migrate/{migration_id}/compiler-logs", response_model=list)
+async def get_compiler_logs_fallback(migration_id: str):
+    return await get_compiler_logs_v1(migration_id)
+
 @router.get("/ws/v1/migrate/{migration_id}/stream")
 async def websocket_stream_http_fallback(migration_id: str):
     validate_migration_id(migration_id)

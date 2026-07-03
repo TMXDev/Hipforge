@@ -25,6 +25,26 @@ class WorkflowContext:
         # ── Core lifecycle fields ───────────────────────────────────────
         self.current_state: str = "QUEUED"
         self.current_attempt: int = 0
+        
+        # ── Execution tracking & metrics ──────────────────────────────
+        import time
+        from datetime import datetime, timezone
+        self.start_time_secs: float = time.time()
+        self.start_time: str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self.cuda_apis_detected: int = 0
+        self.cuda_apis_converted: int = 0
+        self.cuda_apis_remaining: int = 0
+        self.initial_cuda_apis_detail: dict = {}
+        self.remaining_cuda_apis_detail: dict = {}
+        self.files_modified: list = []
+        self.error_category: str = "NONE"
+        self.previous_compiler_errors: list = []
+        self.previous_compile_stderr: str = ""
+        self.infrastructure_error: bool = False
+        self.failure_reason: str = ""
+        self.recommended_next_action: str = ""
+        self.preflight_report: Optional[Dict[str, Any]] = None
+
 
         # ── HIPIFY stage output ─────────────────────────────────────────
         # Absolute path to the translated .hip file written by hipify-clang.

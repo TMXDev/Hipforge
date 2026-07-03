@@ -28,6 +28,7 @@ Per .agent/MOCK_SERVICES.md:
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from app.agents.base_agent import get_ai_client
@@ -37,7 +38,7 @@ logger = logging.getLogger("analysis_agent")
 # ---------------------------------------------------------------------------
 # Model selection (per docs/04_TECHNOLOGY_DECISIONS.md)
 # ---------------------------------------------------------------------------
-ANALYSIS_MODEL = "accounts/fireworks/models/deepseek-v4-pro"
+ANALYSIS_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/qwen2p5-coder-32b-instruct")
 
 # ---------------------------------------------------------------------------
 # Prompt template — exact 6-section structure from docs/09_AI_AGENTS.md
@@ -64,6 +65,8 @@ Rules you must follow:
 (see Migration Journal).
 - Classify the error type: syntax | API mismatch | compiler intrinsic | architecture.
 - Identify every affected file and line number precisely.
+- Pay close attention to variable wavefront sizes on AMD CDNA (64 threads) vs NVIDIA/AMD RDNA (32 threads). Look for hardcoded warp size assumptions (like using literals 32 or 64) and recommend replacing them with the built-in 'warpSize' constant inside kernels, or 'prop.warpSize' queried host-side via 'hipGetDeviceProperties'.
+- For warp shuffles and ballots (e.g. __shfl_sync, __ballot_sync), ensure active mask values fit within 64-bit unsigned integers (uint64_t) in HIP/ROCm. Casts to 32-bit integers will cause logical/compilation failures on 64-thread AMD architectures.
 - Produce a ranked repair_plan list (most promising fix first).
 - Respond ONLY with valid JSON matching the schema exactly — no prose, no markdown.\
 """
@@ -170,6 +173,7 @@ def _parse_response(raw_content: str) -> Dict[str, Any]:
     Handles:
     - Raw JSON string
     - JSON embedded in markdown code fences
+    - Conversational text surrounding the JSON block
 
     Returns the parsed dict, or raises ValueError if JSON is invalid.
     """
@@ -181,12 +185,18 @@ def _parse_response(raw_content: str) -> Dict[str, Any]:
         if think_end != -1:
             content = content[think_end + 8:].strip()
 
-    # Strip markdown code fences if present
-    if content.startswith("```"):
-        lines = content.splitlines()
-        # Remove first line (```json or ```) and last line (```)
-        inner = [line for line in lines[1:] if line.strip() != "```"]
-        content = "\n".join(inner).strip()
+    # Find the first '{' and the last '}' to extract the JSON block
+    # This robustly discards any conversational preamble or postscript
+    start_idx = content.find('{')
+    end_idx = content.rfind('}')
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        content = content[start_idx:end_idx + 1].strip()
+    else:
+        # Fallback to markdown fence stripping if braces not found (defensive)
+        if content.startswith("```"):
+            lines = content.splitlines()
+            inner = [line for line in lines[1:] if line.strip() != "```"]
+            content = "\n".join(inner).strip()
 
     try:
         parsed = json.loads(content)

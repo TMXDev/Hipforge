@@ -1,0 +1,23 @@
+{
+  "suite": "HIPForge CUDA Migration Adversarial Benchmarks",
+  "level": 5,
+  "project": "level5_production_algorithms",
+  "difficulty_rating": "Level 5 of 6",
+  "cuda_features_exercised": [
+    "image_processing",
+    "finite_difference",
+    "sparse_matrix",
+    "monte_carlo",
+    "neural_network_layer",
+    "particle_simulation",
+    "production_algorithms"
+  ],
+  "expected_success_line": "ALL LEVEL 5 CUDA CHECKS PASSED",
+  "estimated_migration_difficulty": {
+    "hipify": {"score": 7, "scale": 10},
+    "compiler": {"score": 7, "scale": 10},
+    "ai_repair": {"score": 8, "scale": 10},
+    "human_engineer": {"score": 6, "scale": 10}
+  }
+}
+

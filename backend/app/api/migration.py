@@ -93,7 +93,23 @@ async def paste_code(request: PasteMigrationRequest):
 @router.post("/api/v1/migrate/{migration_id}/cancel")
 async def cancel_migration(migration_id: str):
     validate_migration_id(migration_id)
-    raise HTTPException(status_code=501, detail="not implemented")
+    from app.redis.client import redis_client
+    from app.redis.keys import status_key
+    from app.redis.publisher import publish_event
+    
+    # Set status to FAILED in Redis
+    await redis_client.set(status_key(migration_id), "FAILED")
+    # Set cancel flag
+    await redis_client.set(f"migration:{migration_id}:cancelled", "true")
+    
+    # Publish cancellation event
+    await publish_event(
+        migration_id=migration_id,
+        stage="FAILED",
+        status="failed",
+        message="Migration cancelled by user."
+    )
+    return {"message": "Migration cancellation request accepted."}
 
 
 @router.get("/api/v1/migrate/{migration_id}/journal")
@@ -117,12 +133,5 @@ async def get_migration_journal_fallback(migration_id: str):
     validate_migration_id(migration_id)
     return await get_migration_journal_v1(migration_id)
 
-
-from app.websocket.stream import handle_websocket_stream
-
-@router.websocket("/ws/v1/migrate/{migration_id}/stream")
-async def websocket_stream(migration_id: str, websocket: WebSocket):
-    validate_migration_id(migration_id)
-    await handle_websocket_stream(websocket, migration_id)
 
 

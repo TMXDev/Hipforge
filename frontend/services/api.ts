@@ -4,7 +4,7 @@
  * Implements endpoints defined in docs/16_API_SPECIFICATION.md.
  */
 
-import type { MigrationResponse, MigrationStatus, JournalEntry } from "@/types/migration";
+import type { MigrationResponse, MigrationStatus, JournalEntry, HealthReport, SelfTestReport } from "@/types/migration";
 
 /** Base URL read from the Next.js environment variable, defaults to localhost for dev.
  *  Supports both NEXT_PUBLIC_API_URL and NEXT_PUBLIC_BACKEND_URL for compatibility. */
@@ -151,4 +151,49 @@ export async function getJournal(
  */
 export function getDownloadUrl(migrationId: string): string {
   return `${API_BASE_URL}/api/v1/migrate/${migrationId}/download`;
+}
+
+/**
+ * Fetches all compiler log lines.
+ * Calls GET /api/v1/migrate/{migration_id}/compiler-logs.
+ *
+ * @param migrationId - UUID of the migration.
+ * @returns Array of log line objects.
+ */
+export async function getCompilerLogs(
+  migrationId: string
+): Promise<any[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/migrate/${migrationId}/compiler-logs`
+  );
+
+  if (!response.ok) {
+    throw new Error(`Compiler logs fetch failed (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function getHealthCheck(): Promise<HealthReport> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/health/check`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Health check failed (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function runSelfTest(): Promise<SelfTestReport> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/self-test`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Self-test failed (HTTP ${response.status})`);
+  }
+
+  return response.json();
 }

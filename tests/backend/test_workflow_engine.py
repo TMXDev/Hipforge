@@ -60,6 +60,7 @@ def test_workflow_engine_immediate_success(redis_test_client):
     expected_order = [
         "QUEUED",
         "PREPARING",
+        "PREFLIGHT",
         "HIPIFY",
         "SCA",
         "COMPILING",
@@ -82,8 +83,8 @@ def test_workflow_engine_immediate_success(redis_test_client):
     redis_status = asyncio.run(check_redis())
     assert redis_status == "COMPLETED"
     
-    # 7 states run, 14 events total (started and completed for each)
-    assert len(events_received) == 14
+    # 8 states run, 16 events total (started and completed for each)
+    assert len(events_received) == 16
     for evt in events_received:
         assert evt["migration_id"] == migration_id
         assert evt["status"] in ("started", "completed")
@@ -138,6 +139,7 @@ def test_workflow_engine_retry_recovery(redis_test_client):
     expected_order = [
         "QUEUED",
         "PREPARING",
+        "PREFLIGHT",
         "HIPIFY",
         "SCA",
         "COMPILING",
@@ -166,8 +168,8 @@ def test_workflow_engine_retry_recovery(redis_test_client):
     redis_status = asyncio.run(check_redis())
     assert redis_status == "COMPLETED"
     
-    # 13 states run, 26 events total
-    assert len(events_received) == 26
+    # 14 states run, 28 events total
+    assert len(events_received) == 28
 
 def test_workflow_engine_failure_exhausted_retries(redis_test_client):
     migration_id = "test-fail-migration-id"
@@ -217,11 +219,9 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
     expected_order = [
         "QUEUED",
         "PREPARING",
+        "PREFLIGHT",
         "HIPIFY",
         "SCA",
-        "COMPILING",
-        "ANALYZING",
-        "PATCHING",
         "COMPILING",
         "ANALYZING",
         "PATCHING",
@@ -235,7 +235,7 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
     assert visited_states == expected_order
     assert final_state == "FAILED"
     assert engine.context.current_state is None
-    assert engine.context.current_attempt == 2
+    assert engine.context.current_attempt == 1
     
     # Verify Redis status key contains "FAILED"
     from app.redis.client import redis_client
@@ -247,8 +247,8 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
     redis_status = asyncio.run(check_redis())
     assert redis_status == "FAILED"
 
-    # 15 states run, 30 events total
-    assert len(events_received) == 30
+    # 13 states run, 26 events total
+    assert len(events_received) == 26
     for evt in events_received:
         assert evt["migration_id"] == migration_id
         assert "timestamp" in evt

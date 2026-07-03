@@ -1497,3 +1497,71 @@ STOP.
 >
 > Update `docs/30_IMPLEMENTATION_TRACKER.md` with ✅ for every completed component.
 > You're ready to present.
+
+---
+
+# STARTUP PRODUCTIZATION IMPLEMENTATION PROMPTS
+
+Use the following prompts in your upcoming sessions to build out the commercial-grade features described in the roadmap.
+
+## Session 15.1 — gVisor Sandboxing Script
+
+```markdown
+You are a senior system architect and security engineer.
+Implement a Python helper function `run_sandboxed_compiler(workspace_path: str, command: list, timeout_sec: int = 30) -> dict` that executes compiler tools safely inside an isolated Docker sandbox.
+
+Requirements:
+1. Docker Sandbox: Use a lightweight Docker container based on the `rocm/dev-ubuntu-22.04` image.
+2. Sandboxed Runtime: The container must be run using gVisor (i.e., specify runtime="runsc" in Docker).
+3. Hard Resource Limits: Limit the container to 2GB memory and 2 CPU cores.
+4. Security Constraints: Disable network access completely inside the container (--network none), and run as a non-root user.
+5. Directory Mounting: Mount the workspace 'input' directory as Read-Only and the 'generated' and 'logs' directories as Read-Write.
+6. Execution & Cleanup: Run the command, capture stdout/stderr, enforce the timeout, and guarantee the container is destroyed/cleaned up instantly even if it crashes or times out.
+7. Return Format: Return a dict containing {"returncode": int, "stdout": str, "stderr": str, "timeout": bool}.
+
+Write clean, robust, and highly secure Python code using the official `docker` Python SDK. Include thorough logging and error handling.
+```
+
+---
+
+## Session 15.2 — AST Pruning & Sliding Context Window
+
+```markdown
+You are a compiler engineer and Python developer.
+Implement a Python utility `get_optimized_error_context(source_path: str, error_line: int, window_lines: int = 50) -> str` that extracts a highly optimized semantic slice of a source file around a compilation error.
+
+Requirements:
+1. AST Extraction: Use the `clang.cindex` Python bindings to parse the source file's Abstract Syntax Tree (AST).
+2. Semantic Slicing: Locate the function, class, or structure that contains the `error_line`.
+3. Context Compilation: Extract the full code of that function/class block, including:
+   - Any global macros (#define) used in the file.
+   - Headers/includes at the top of the file.
+   - Any global variables referenced inside the function.
+4. Fallback: If AST parsing fails or the error line falls outside a resolved block, fall back to extracting a sliding window of `window_lines` lines before and after the `error_line`.
+5. Return Format: Return the compiled slice as a string, formatted cleanly to be sent as context to an LLM.
+
+Write clean, optimized, and robust Python code. Add comments explaining the AST node traversal logic.
+```
+
+---
+
+## Session 15.3 — LLM Search-and-Replace Patching Applier
+
+```markdown
+You are a senior tools developer.
+Implement a Python function `apply_llm_search_replace_patch(original_code: str, patch_response: str) -> str` that parses search-and-replace blocks from an LLM and applies them programmatically.
+
+Requirements:
+1. Prompt Format: The LLM output is expected to follow this format:
+   <<<<<<< SEARCH
+   [exact code lines in original file]
+   =======
+   [replacement code lines]
+   >>>>>>> REPLACE
+2. Parsing: Locate all search-and-replace blocks inside the `patch_response`.
+3. Validation: Verify that the SEARCH block matches a unique substring in the `original_code`. If there are multiple matches or no match, raise a ValueError with diagnostic details.
+4. Application: Replace the SEARCH block with the REPLACE block, keeping all whitespace and indentation intact.
+5. Return Format: Return the modified complete file contents as a string.
+
+Include extensive unit tests using unittest or pytest to verify exact matching, multiple search-replace blocks, and edge cases with whitespace/indentation.
+```

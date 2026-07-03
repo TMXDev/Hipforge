@@ -1,0 +1,28 @@
+{
+  "suite": "HIPForge CUDA Migration Adversarial Benchmarks",
+  "level": 6,
+  "project": "level6_extreme_migration_stress",
+  "difficulty_rating": "Level 6 of 6",
+  "cuda_features_exercised": [
+    "complex_macros",
+    "custom_cuda_wrappers",
+    "device_helper_libraries",
+    "launch_wrapper_abstractions",
+    "template_recursion",
+    "function_pointers",
+    "advanced_constexpr",
+    "custom_allocators",
+    "mixed_host_device_utilities",
+    "nested_namespaces",
+    "large_enum_usage",
+    "constant_memory"
+  ],
+  "expected_success_line": "ALL LEVEL 6 CUDA CHECKS PASSED",
+  "estimated_migration_difficulty": {
+    "hipify": {"score": 9, "scale": 10},
+    "compiler": {"score": 9, "scale": 10},
+    "ai_repair": {"score": 9, "scale": 10},
+    "human_engineer": {"score": 8, "scale": 10}
+  }
+}
+

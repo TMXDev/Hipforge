@@ -2,7 +2,7 @@ import os
 import shutil
 import pytest
 from unittest.mock import patch, MagicMock
-from app.compiler.hipcc_runner import run_hipcc, HipccRunner, MockHipccRunner
+from app.compiler.hipcc_runner import run_hipcc, HipccRunner
 from app.compiler.error_parser import parse_compiler_errors
 from app.models.compiler_error import CompilerError
 from app.config.settings import settings
@@ -14,7 +14,9 @@ SAMPLE_ERROR_HIP = os.path.join(FIXTURES_DIR, "sample_error.hip")
 OUTPUT_BINARY = os.path.join(FIXTURES_DIR, "output", "sample.bin")
 
 @pytest.fixture(autouse=True)
-def cleanup():
+def cleanup(monkeypatch):
+    monkeypatch.setenv("USE_MOCK_COMPILER", "false")
+    monkeypatch.setenv("DISABLE_COMPILER_CACHE", "true")
     output_dir = os.path.dirname(OUTPUT_BINARY)
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
@@ -52,48 +54,16 @@ def test_error_parser_basic():
     assert errors[2].message == "missing semicolon"
     assert errors[2].code == "E0001"
 
-def test_mock_hipcc_runner_success():
-    """Verify MockHipccRunner compiles successfully and writes output."""
-    runner = MockHipccRunner()
-    result = runner.run_hipcc(SAMPLE_HIP, OUTPUT_BINARY)
-    
-    assert result["success"] is True
-    assert result["binary_path"] == OUTPUT_BINARY
-    assert len(result["errors"]) == 0
-    assert os.path.exists(OUTPUT_BINARY)
 
-def test_mock_hipcc_runner_failure():
-    """Verify MockHipccRunner fails and returns structured errors matching trigger."""
-    runner = MockHipccRunner()
-    result = runner.run_hipcc(SAMPLE_ERROR_HIP, OUTPUT_BINARY)
-    
-    assert result["success"] is False
-    assert result["binary_path"] == ""
-    assert not os.path.exists(OUTPUT_BINARY)
-    
-    errors = result["errors"]
-    assert len(errors) == 2
-    
-    assert errors[0].file == SAMPLE_ERROR_HIP
-    assert errors[0].line == 42
-    assert errors[0].column == 8
-    assert "hipMemcpyAsync" in errors[0].message
-    assert errors[0].code == "E0308"
-    
-    assert errors[1].file == SAMPLE_ERROR_HIP
-    assert errors[1].line == 67
-    assert errors[1].column == 12
-    assert "hipStreamNonBlocking" in errors[1].message
-    assert errors[1].code == "E0020"
 
 def test_real_hipcc_runner_success():
-    """Verify HipccRunner runs subprocess compile with correct arguments (mocked subprocess)."""
-    with patch("subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "hipcc compiled success"
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
+    """Verify HipccRunner runs subprocess compile with correct arguments (mocked sandbox)."""
+    with patch("app.compiler.sandbox.run_sandboxed_compiler") as mock_sandbox:
+        mock_sandbox.return_value = {
+            "returncode": 0,
+            "stdout": "hipcc compiled success",
+            "stderr": ""
+        }
         
         runner = HipccRunner()
         result = runner.run_hipcc(SAMPLE_HIP, OUTPUT_BINARY)
@@ -102,21 +72,16 @@ def test_real_hipcc_runner_success():
         assert result["binary_path"] == OUTPUT_BINARY
         assert len(result["errors"]) == 0
         
-        mock_run.assert_called_once_with(
-            ["hipcc", SAMPLE_HIP, "-o", OUTPUT_BINARY],
-            capture_output=True,
-            text=True,
-            check=False
-        )
+        mock_sandbox.assert_called_once()
 
 def test_real_hipcc_runner_failure():
-    """Verify HipccRunner parsing error logs on failed compile (mocked subprocess)."""
-    with patch("subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        mock_result.stderr = f"{SAMPLE_HIP}:10:5: error: missing token [E444]\n"
-        mock_run.return_value = mock_result
+    """Verify HipccRunner parsing error logs on failed compile (mocked sandbox)."""
+    with patch("app.compiler.sandbox.run_sandboxed_compiler") as mock_sandbox:
+        mock_sandbox.return_value = {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": f"{SAMPLE_HIP}:10:5: error: missing token [E444]\n"
+        }
         
         runner = HipccRunner()
         result = runner.run_hipcc(SAMPLE_HIP, OUTPUT_BINARY)
@@ -130,8 +95,9 @@ def test_real_hipcc_runner_failure():
         assert result["errors"][0].code == "E444"
 
 def test_run_hipcc_dispatch():
-    """Verify dispatch logic dynamically picks Mock vs Real runner."""
-    with patch.object(settings, "USE_MOCK_COMPILER", True):
+    """Verify dispatch logic works correctly."""
+    with patch("app.compiler.hipcc_runner.HipccRunner.run_hipcc") as mock_run:
+        mock_run.return_value = {"success": True, "binary_path": OUTPUT_BINARY, "errors": []}
         result = run_hipcc(SAMPLE_HIP, OUTPUT_BINARY)
         assert result["success"] is True
-        assert os.path.exists(OUTPUT_BINARY)
+        mock_run.assert_called_once_with(SAMPLE_HIP, OUTPUT_BINARY, None, None)

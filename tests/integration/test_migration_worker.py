@@ -114,40 +114,79 @@ class MockPubSub:
 @pytest.fixture
 def redis_integration_client():
     """Initializes the Redis client for integration testing with MockRedis fallback."""
-    client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    # Save originals so we can restore them after the test
+    orig_client = app.redis.client.redis_client
+    orig_manager = app.redis.manager.redis_client
+    orig_publisher = app.redis.publisher.redis_client
+    orig_subscriber = app.redis.subscriber.redis_client
+
+    is_live = False
+    temp_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         # Check if real Redis is available
-        asyncio.run(client.ping())
-        yield client
-        asyncio.run(client.aclose())
+        asyncio.run(temp_client.ping())
+        asyncio.run(temp_client.aclose())
+        result_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        is_live = True
     except Exception:
         # Fallback to local MockRedis
-        mock_client = MockRedis()
-        app.redis.client.redis_client = mock_client
-        app.redis.manager.redis_client = mock_client
-        app.redis.publisher.redis_client = mock_client
-        app.redis.subscriber.redis_client = mock_client
-        yield mock_client
+        result_client = MockRedis()
+
+    # Always patch app modules with the chosen client
+    app.redis.client.redis_client = result_client
+    app.redis.manager.redis_client = result_client
+    app.redis.publisher.redis_client = result_client
+    app.redis.subscriber.redis_client = result_client
+
+    yield result_client
+
+    # Restore originals
+    app.redis.client.redis_client = orig_client
+    app.redis.manager.redis_client = orig_manager
+    app.redis.publisher.redis_client = orig_publisher
+    app.redis.subscriber.redis_client = orig_subscriber
+
+    if is_live:
+        try:
+            asyncio.run(result_client.aclose())
+        except RuntimeError:
+            pass
 
 
 @pytest.fixture(autouse=True)
-def clean_redis_keys(redis_integration_client):
+def clean_redis_keys():
     """Ensures Redis namespace is clean before and after integration tests."""
     async def _clean():
-        await redis_integration_client.delete("hipforge:queue:pending", "hipforge:queue:active")
-        if hasattr(redis_integration_client, "keys"):
-            keys = await redis_integration_client.keys("migration:*")
+        client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            await client.delete("hipforge:queue:pending", "hipforge:queue:active")
+            keys = await client.keys("migration:*")
             if keys:
-                await redis_integration_client.delete(*keys)
+                await client.delete(*keys)
+        except Exception:
+            # Fallback: clean mock client in memory databases
+            from app.redis.client import redis_client
+            if hasattr(redis_client, "db"):
+                redis_client.db.clear()
+            if hasattr(redis_client, "lists"):
+                redis_client.lists.clear()
+            if hasattr(redis_client, "_db"):
+                redis_client._db.clear()
+            if hasattr(redis_client, "_lists"):
+                redis_client._lists.clear()
+        finally:
+            await client.aclose()
+            
     asyncio.run(_clean())
     yield
     asyncio.run(_clean())
 
 
-def test_migration_worker_integration(redis_integration_client):
+@pytest.mark.anyio
+async def test_migration_worker_integration():
     """
     Integration test for the Migration Worker:
-    1. Starts worker in a background thread.
+    1. Starts worker in a background asyncio task.
     2. Submits a job via Redis LPUSH.
     3. Asserts the job successfully transitions through all 10 states to reach COMPLETED.
     4. Asserts that the worker remains alive after job execution.
@@ -168,37 +207,26 @@ def test_migration_worker_integration(redis_integration_client):
             
     app.workflow_engine.states.handle_compiling = mock_handle_compiling
     
+    from app.redis.client import redis_client
+    migration_id = "int-test-job-123"
+    payload = {
+        "migration_id": migration_id,
+        "workspace_path": "/app/workspace/int-test-123",
+        "retry_budget": 1  # Ensures loop goes through PREFLIGHT before HIPIFY.
+    }
+    
+    # Start the worker in the background as an asyncio Task
+    app.workers.migration_worker.running = True
+    worker_task = asyncio.create_task(run_worker())
+    
     try:
-        # Start worker loop in a background thread
-        worker_loop = asyncio.new_event_loop()
-        def worker_target():
-            asyncio.set_event_loop(worker_loop)
-            worker_loop.run_until_complete(run_worker())
-            
-        thread = threading.Thread(target=worker_target, daemon=True)
-        app.workers.migration_worker.running = True
-        thread.start()
-        
-        # Wait briefly for thread initiation
-        time.sleep(0.3)
-        assert thread.is_alive(), "Worker thread must start successfully"
-        
-        migration_id = "int-test-job-123"
-        payload = {
-            "migration_id": migration_id,
-            "workspace_path": "/app/workspace/int-test-123",
-            "retry_budget": 1  # Ensures loop goes: QUEUED -> PREPARING -> HIPIFY -> SCA -> COMPILING (fail) -> ANALYZING -> PATCHING -> COMPILING (fail) -> RESEARCHING -> COMPILING (success) -> GENERATING_REPORT -> COMPLETED
-        }
-        
         # Subscribe to Pub/Sub events channel to capture all transition events
-        pubsub = redis_integration_client.pubsub()
-        asyncio.run(pubsub.subscribe(events_channel(migration_id)))
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(events_channel(migration_id))
         
         # Push the job into Redis pending queue
-        async def submit_job():
-            from app.redis.manager import enqueue_job
-            await enqueue_job(migration_id, payload)
-        asyncio.run(submit_job())
+        from app.redis.manager import enqueue_job
+        await enqueue_job(migration_id, payload)
         
         # Wait for the job status to transition to COMPLETED (with timeout)
         timeout = 5.0
@@ -206,30 +234,26 @@ def test_migration_worker_integration(redis_integration_client):
         completed = False
         
         while time.time() - start_time < timeout:
-            async def get_status():
-                return await redis_integration_client.get(status_key(migration_id))
-            status = asyncio.run(get_status())
+            status = await redis_client.get(status_key(migration_id))
             if status == "COMPLETED":
                 completed = True
                 break
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             
-        assert completed, f"Job failed to reach COMPLETED state. Last status: {asyncio.run(get_status()) if 'get_status' in locals() else 'None'}"
+        assert completed, f"Job failed to reach COMPLETED state. Last status: {await redis_client.get(status_key(migration_id))}"
         
         # Retrieve and parse all published Pub/Sub transition events
         events_collected = []
-        async def collect_events():
-            while True:
-                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
-                if msg is None:
-                    break
-                events_collected.append(json.loads(msg["data"]))
-            await pubsub.aclose()
-        asyncio.run(collect_events())
+        while True:
+            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
+            if msg is None:
+                break
+            events_collected.append(json.loads(msg["data"]))
+        await pubsub.aclose()
         
         # Assert all 10 stages were traversed and published
         expected_stages = {
-            "QUEUED", "PREPARING", "HIPIFY", "SCA", "COMPILING",
+            "QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING",
             "ANALYZING", "PATCHING", "RESEARCHING", "GENERATING_REPORT", "COMPLETED"
         }
         
@@ -238,14 +262,19 @@ def test_migration_worker_integration(redis_integration_client):
             assert stage in stages_published, f"Stage {stage} was not executed or published"
             
         # Assert worker remains alive and running after task completion
-        assert thread.is_alive(), "Worker thread crashed or stopped unexpectedly after task completion"
-        
-        # Graceful shutdown of the worker thread
-        app.workers.migration_worker.running = False
-        thread.join(timeout=2.0)
+        assert not worker_task.done(), "Worker task died unexpectedly"
         
     finally:
+        # Graceful shutdown of the worker task
+        app.workers.migration_worker.running = False
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+            
         # Cleanup mock handlers
         app.workflow_engine.states.handle_compiling = original_handle_compiling
         if "MIGRATION_WORKER_TIMEOUT" in os.environ:
             del os.environ["MIGRATION_WORKER_TIMEOUT"]
+

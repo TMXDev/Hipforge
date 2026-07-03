@@ -1,0 +1,46 @@
+{
+  "suite": "HIPForge CUDA Migration Adversarial Benchmarks",
+  "level": 2,
+  "project": "level2_advanced_runtime",
+  "difficulty_rating": "Level 2 of 6",
+  "estimated_migration_difficulty": {
+    "hipify": {
+      "score": 6,
+      "scale": 10,
+      "rationale": "Texture/surface objects, constant symbols, cooperative groups, warp intrinsics, and CUDA graphs are common migration weak points."
+    },
+    "compiler": {
+      "score": 6,
+      "scale": 10,
+      "rationale": "The project requires correct CUDA object type conversion, dynamic shared memory launches, graph overload handling, and CMake CUDA language migration."
+    },
+    "ai_repair": {
+      "score": 7,
+      "scale": 10,
+      "rationale": "Automated repair can easily introduce semantically plausible but incorrect replacements for graph capture, texture reads, surface writes, and constant memory."
+    },
+    "human_engineer": {
+      "score": 5,
+      "scale": 10,
+      "rationale": "The code is understandable but requires careful validation of stream order, object lifetimes, memory spaces, and image access semantics."
+    }
+  },
+  "cuda_features_exercised": [
+    "warp_shuffle",
+    "cooperative_groups",
+    "constant_memory",
+    "texture_memory",
+    "surface_memory",
+    "atomics",
+    "dynamic_shared_memory",
+    "multiple_streams",
+    "cuda_events",
+    "async_memory_copies",
+    "cuda_graphs",
+    "pinned_memory",
+    "cuda_arrays",
+    "stream_capture"
+  ],
+  "expected_success_line": "ALL LEVEL 2 CUDA CHECKS PASSED"
+}
+

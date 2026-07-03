@@ -233,6 +233,7 @@ def cuda_source() -> str:
 ALL_10_STATES = [
     "QUEUED",
     "PREPARING",
+    "PREFLIGHT",
     "HIPIFY",
     "SCA",
     "COMPILING",

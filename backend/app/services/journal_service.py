@@ -152,11 +152,11 @@ async def write_state_journal_entry(context: Any) -> None:
 
     analysis_summary = None
     if context.analysis_result:
-        analysis_summary = context.analysis_result.get("summary")
+        analysis_summary = context.analysis_result.get("root_cause") or context.analysis_result.get("summary")
 
     patch_summary = None
-    if context.current_state == "PATCHING" and context.analysis_result:
-        patch_summary = context.analysis_result.get("summary")
+    if getattr(context, "patch_metadata", None):
+        patch_summary = context.patch_metadata.get("summary")
 
     research_summary = None
     if context.research_context:

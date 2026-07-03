@@ -24,6 +24,7 @@ Per docs/04_TECHNOLOGY_DECISIONS.md:
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from app.agents.base_agent import get_ai_client
@@ -31,7 +32,7 @@ from app.agents.base_agent import get_ai_client
 logger = logging.getLogger("research_agent")
 
 # Model selection (using Qwen for reasoning/documentation lookup tasks)
-RESEARCH_MODEL = "accounts/fireworks/models/deepseek-v4-pro"
+RESEARCH_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/qwen2p5-coder-32b-instruct")
 
 # ---------------------------------------------------------------------------
 # Prompt template — exact 6-section structure from docs/09_AI_AGENTS.md
@@ -46,6 +47,8 @@ to find correct HIP equivalents. You do NOT generate source code or write code f
 
 Rules you must follow:
 - Prioritize official AMD ROCm/HIP documentation and official examples.
+- Focus heavily on thread-grouping and wavefront portability. Look for solutions that accommodate variable AMD wavefront sizes (32 or 64 threads) using 'warpSize' built-ins or 'hipGetDeviceProperties' queries.
+- Ensure that researched instructions for shuffles and ballots specify uint64_t masks instead of 32-bit types, adhering to CDNA/RDNA cross-architecture requirements.
 - Never repeat a recommendation that has already been attempted and failed \
 (see Migration Journal).
 - Respond ONLY with valid JSON matching the schema exactly — no prose, no markdown.\

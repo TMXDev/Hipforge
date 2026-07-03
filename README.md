@@ -55,14 +55,15 @@ graph TD
 
 ---
 
-## 🛠️ The 10 Job States
+## 🛠️ Job States
 
 Every migration travels through exactly these states in order, broadcasting progress in real time:
 
-$$\text{QUEUED} \rightarrow \text{PREPARING} \rightarrow \text{HIPIFY} \rightarrow \text{SCA} \rightarrow \text{COMPILING} \rightarrow \text{ANALYZING} \rightarrow \text{PATCHING} \rightarrow \text{RESEARCHING} \rightarrow \text{COMPILING (retry)} \rightarrow \text{GENERATING\_REPORT} \rightarrow \text{COMPLETED / FAILED}$$
+$$\text{QUEUED} \rightarrow \text{PREPARING} \rightarrow \text{PREFLIGHT} \rightarrow \text{HIPIFY} \rightarrow \text{SCA} \rightarrow \text{COMPILING} \rightarrow \text{ANALYZING} \rightarrow \text{PATCHING} \rightarrow \text{RESEARCHING} \rightarrow \text{COMPILING (retry)} \rightarrow \text{GENERATING\_REPORT} \rightarrow \text{COMPLETED / FAILED}$$
 
 *   **QUEUED**: Job is created and waiting in the Redis list.
-*   **PREPARING**: Directory structure is generated under `workspace/YYYY/MM/migration_id/`.
+*   **PREPARING**: Directory structure is generated under `workspace/YYYY/MM/migration_id/` and uploaded ZIPs are extracted.
+*   **PREFLIGHT**: Docker, sandbox, toolchain, Fireworks, workspace, cache, and disk checks run before migration tools launch.
 *   **HIPIFY**: Running `hipify-clang` to deterministically translate CUDA calls to HIP.
 *   **SCA**: Semantic Compatibility Analyzer scans for deep architectural differences.
 *   **COMPILING**: `hipcc` compiles the source file. If successful, skips to report generation.
@@ -90,6 +91,124 @@ The application configuration is managed via a `.env` file at the project root.
 *   `USE_MOCK_AI`: Set to `true` to run the AI Agents with a deterministic local simulation, or `false` to connect to the live Fireworks AI API.
 *   `USE_MOCK_COMPILER`: Set to `true` to mock compiler subprocesses, or `false` to execute real `hipify-clang` / `hipcc` binaries locally.
 *   `FIREWORKS_API_KEY`: Your Fireworks AI developer platform API key (required when `USE_MOCK_AI=false`).
+*   `FIREWORKS_MODEL`: Fireworks model ID used by the AI agents.
+*   `HIPFORGE_SANDBOX_IMAGE`: Docker image used for sandboxed compiler execution (default: `rocm/dev-ubuntu-22.04`).
+*   `ALLOW_RUNSC_FALLBACK`: Whether Docker may fall back to its default runtime when `runsc` is unavailable (default: `true`).
+*   `REQUIRE_HOST_HIPIFY`: Require host `hipify-clang` instead of relying on sandbox fallback.
+*   `REQUIRE_NINJA`: Require Ninja even when the uploaded project does not include `build.ninja`.
+*   `HIPFORGE_MIN_FREE_DISK_BYTES`: Minimum free disk threshold checked by pre-flight diagnostics.
+
+---
+
+## Required Dependencies
+
+Production migrations with `USE_MOCK_COMPILER=false` require:
+
+*   Docker Engine or Docker Desktop with a running daemon.
+*   Python Docker SDK connectivity from the backend/worker environment.
+*   The configured sandbox image (`HIPFORGE_SANDBOX_IMAGE`) present locally or pullable.
+*   `hipify-clang` available either on the host when `REQUIRE_HOST_HIPIFY=true` or inside the sandbox image.
+*   `hipcc` and ROCm include directories inside the sandbox image.
+*   CUDA toolkit compatibility files needed by HIPIFY, including `cuda_runtime.h` and `libdevice`.
+*   Writable `WORKSPACE_PATH`, output, temporary workspace, and compiler cache directories.
+*   Enough disk space for uploads, generated files, logs, reports, and exports.
+*   A valid `FIREWORKS_API_KEY` and reachable Fireworks model when `USE_MOCK_AI=false`.
+
+## Optional Dependencies
+
+*   gVisor `runsc` for stronger sandbox isolation. If missing and `ALLOW_RUNSC_FALLBACK=true`, HIPForge reports a warning and uses Docker's default runtime.
+*   CMake, required only when the uploaded project contains `CMakeLists.txt`.
+*   Ninja, required only when `REQUIRE_NINJA=true` or the uploaded project contains `build.ninja`.
+*   Host `hipify-clang`, useful for faster host-side translation but not required unless `REQUIRE_HOST_HIPIFY=true`.
+
+---
+
+## Installation Verification
+
+Run diagnostics before the first migration:
+
+```bash
+hipforge doctor
+```
+
+Run the official install self-test:
+
+```bash
+hipforge self-test
+```
+
+The self-test creates a temporary CUDA project, runs HIPIFY, compiles with HIPCC, verifies that an output binary was produced, and deletes temporary files.
+
+The web UI exposes the same checks at:
+
+```text
+http://localhost:3000/health
+```
+
+The backend JSON endpoints are:
+
+```text
+GET  /api/v1/health/check
+GET  /api/v1/doctor
+POST /api/v1/self-test
+```
+
+---
+
+## Running `hipforge doctor`
+
+`hipforge doctor` executes the full pre-flight suite and prints:
+
+*   Overall Health Score
+*   Installed Components
+*   Missing Components
+*   Recommended Fixes
+*   Warnings
+*   Estimated Migration Readiness
+
+Useful variants:
+
+```bash
+hipforge doctor --verbose
+hipforge doctor --json
+hipforge doctor --remote --host http://localhost:8000
+```
+
+If any critical dependency is missing, real migrations stop at `PREFLIGHT`. HIPForge does not launch HIPIFY, HIPCC, analyzers, patchers, or Fireworks requests for an impossible migration.
+
+## Running `hipforge self-test`
+
+```bash
+hipforge self-test --arch gfx90a
+hipforge self-test --json
+```
+
+Use `self-test` after installing Docker, ROCm/CUDA compatibility files, or changing the sandbox image. In mock mode it verifies the mock compiler path; in production mode it verifies the real HIPIFY/HIPCC path.
+
+---
+
+## Common Failure Modes
+
+*   **Docker Daemon**: Docker is not running or the worker cannot reach it. Start Docker and rerun `hipforge doctor`.
+*   **Docker Image**: The sandbox image is missing. Run `docker pull <HIPFORGE_SANDBOX_IMAGE>`.
+*   **gVisor runsc**: `runsc` is not registered. Install gVisor or keep `ALLOW_RUNSC_FALLBACK=true`.
+*   **hipify-clang / hipcc**: ROCm compiler tools are missing from the host or sandbox. Install the ROCm HIP SDK in the active execution environment.
+*   **CUDA Toolkit**: `cuda_runtime.h` or `libdevice` cannot be found. Install CUDA toolkit compatibility packages in the sandbox image.
+*   **Fireworks API Key**: `FIREWORKS_API_KEY` is missing while `USE_MOCK_AI=false`. Add the key or enable mock AI.
+*   **Invalid Fireworks Model**: The selected model cannot return a completion. Check `FIREWORKS_MODEL` and account access.
+*   **Workspace Permissions**: `WORKSPACE_PATH`, `exports`, or temp directories are not writable. Fix ownership or permissions.
+*   **Compiler Cache**: Cache metadata is corrupted. Delete `workspace/.cache` or set `DISABLE_COMPILER_CACHE=true`.
+*   **Disk Space**: Free space is below `HIPFORGE_MIN_FREE_DISK_BYTES`. Free disk space or lower the threshold for constrained test environments.
+
+## Troubleshooting
+
+1. Run `hipforge doctor --verbose`.
+2. Fix the first critical failure listed under Recommended Fixes.
+3. Run `hipforge self-test`.
+4. Start the backend and worker, then open `/health` in the web UI.
+5. Retry the migration only after readiness is `READY`, `READY_WITH_WARNINGS`, or `MOCK_READY`.
+
+Migration reports now end with Environment Summary, Migration Summary, Compile Summary, AI Usage Summary, Repair Iterations, Elapsed Time, Failure Category, and Recommended Next Action.
 
 ---
 

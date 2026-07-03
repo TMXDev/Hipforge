@@ -2,7 +2,7 @@ import os
 import shutil
 import pytest
 from unittest.mock import patch, MagicMock
-from app.compiler.hipify_runner import run_hipify, HipifyRunner, MockHipifyRunner
+from app.compiler.hipify_runner import run_hipify, HipifyRunner
 from app.config.settings import settings
 
 # Paths for testing
@@ -21,32 +21,7 @@ def cleanup():
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
 
-def test_mock_hipify_runner_success():
-    """Test MockHipifyRunner produces a translated HIP file successfully."""
-    runner = MockHipifyRunner()
-    result = runner.run_hipify(SAMPLE_CU, OUTPUT_HIP)
-    
-    assert result["success"] is True
-    assert result["output_path"] == OUTPUT_HIP
-    assert result["stderr"] == ""
-    assert os.path.exists(OUTPUT_HIP)
-    
-    # Read output and verify translation keywords
-    with open(OUTPUT_HIP, "r", encoding="utf-8") as f:
-        content = f.read()
-    assert "hipMalloc" in content
-    assert "hipMemcpy" in content
-    assert "cudaMalloc" not in content
 
-def test_mock_hipify_runner_failure():
-    """Test MockHipifyRunner fails on error trigger comment."""
-    runner = MockHipifyRunner()
-    result = runner.run_hipify(SAMPLE_ERROR_CU, OUTPUT_HIP)
-    
-    assert result["success"] is False
-    assert result["output_path"] == OUTPUT_HIP
-    assert "mock failure" in result["stderr"]
-    assert not os.path.exists(OUTPUT_HIP)
 
 def test_real_hipify_runner_success():
     """Test HipifyRunner runs subprocess hipify-clang successfully (mocked subprocess)."""
@@ -99,9 +74,9 @@ def test_real_hipify_runner_not_found():
         assert "not found" in result["stderr"]
 
 def test_run_hipify_dispatch_success():
-    """Test run_hipify dispatcher function works correctly according to USE_MOCK_COMPILER settings."""
-    # Test with USE_MOCK_COMPILER=True (should dispatch to MockHipifyRunner)
-    with patch.object(settings, "USE_MOCK_COMPILER", True):
+    """Test run_hipify dispatcher function works correctly."""
+    with patch("app.compiler.hipify_runner.HipifyRunner.run_hipify") as mock_run:
+        mock_run.return_value = {"success": True, "output_path": OUTPUT_HIP}
         result = run_hipify(SAMPLE_CU, OUTPUT_HIP)
         assert result["success"] is True
-        assert os.path.exists(OUTPUT_HIP)
+        mock_run.assert_called_once_with(SAMPLE_CU, OUTPUT_HIP)
