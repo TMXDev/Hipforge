@@ -11,59 +11,6 @@ import app.redis.client
 
 client = TestClient(fastapi_app)
 
-def patch_mock_redis_full(redis_client):
-    if not redis_client:
-        return
-    # Check if it is a MockRedis instance
-    if not (hasattr(redis_client, "lists") or hasattr(redis_client, "db")):
-        return
-        
-    cls = redis_client.__class__
-    db_attr = "lists" if hasattr(redis_client, "lists") else "db"
-    
-    if not hasattr(cls, "get"):
-        async def mock_get(self, key: str):
-            db = getattr(self, db_attr)
-            val = db.get(key)
-            if isinstance(val, list):
-                return None
-            return val
-        cls.get = mock_get
-        
-    if not hasattr(cls, "set"):
-        async def mock_set(self, key: str, value: str):
-            db = getattr(self, db_attr)
-            db[key] = value
-            return True
-        cls.set = mock_set
-        
-    if not hasattr(cls, "hset"):
-        async def mock_hset(self, key: str, mapping: dict = None, **kwargs):
-            db = getattr(self, db_attr)
-            if key not in db:
-                db[key] = {}
-            if not isinstance(db[key], dict):
-                db[key] = {}
-            if mapping:
-                db[key].update(mapping)
-            if kwargs:
-                db[key].update(kwargs)
-            return len(mapping) if mapping else 0
-        cls.hset = mock_hset
-        
-    if not hasattr(cls, "hgetall"):
-        async def mock_hgetall(self, key: str):
-            db = getattr(self, db_attr)
-            val = db.get(key)
-            if isinstance(val, dict):
-                return val
-            return {}
-        cls.hgetall = mock_hgetall
-
-@pytest.fixture(autouse=True)
-def setup_mock_redis_methods(redis_test_client):
-    patch_mock_redis_full(redis_test_client)
-    yield
 
 @pytest.fixture(autouse=True)
 def cleanup_workspaces():

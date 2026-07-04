@@ -8,7 +8,8 @@ from app.api.security_utils import validate_migration_id
 
 router = APIRouter()
 
-async def get_status_logic(migration_id: str) -> MigrationStatusResponse:
+@router.get("/api/v1/migrate/{migration_id}/status", response_model=MigrationStatusResponse)
+async def get_migration_status_v1(migration_id: str):
     validate_migration_id(migration_id)
     # 1. Fetch status key
     s_key = status_key(migration_id)
@@ -53,21 +54,6 @@ async def get_status_logic(migration_id: str) -> MigrationStatusResponse:
         message=f"Migration is {status} in stage {stage}."
     )
 
-@router.get("/api/v1/migrate/{migration_id}/status", response_model=MigrationStatusResponse)
-async def get_migration_status_v1(migration_id: str):
-    return await get_status_logic(migration_id)
-
-@router.get("/api/v1/migrate/{migration_id}", response_model=MigrationStatusResponse)
-async def get_migration_status_v1_short(migration_id: str):
-    return await get_status_logic(migration_id)
-
-@router.get("/migrate/{migration_id}/status", response_model=MigrationStatusResponse)
-async def get_migration_status_fallback(migration_id: str):
-    return await get_status_logic(migration_id)
-
-@router.get("/migrate/{migration_id}", response_model=MigrationStatusResponse)
-async def get_migration_status_fallback_short(migration_id: str):
-    return await get_status_logic(migration_id)
 
 @router.get("/api/v1/migrate/{migration_id}/compiler-logs", response_model=list)
 async def get_compiler_logs_v1(migration_id: str):
@@ -79,14 +65,7 @@ async def get_compiler_logs_v1(migration_id: str):
     logs_raw = await redis_client.lrange(c_key, 0, -1)
     return [json.loads(line) for line in logs_raw]
 
-@router.get("/migrate/{migration_id}/compiler-logs", response_model=list)
-async def get_compiler_logs_fallback(migration_id: str):
-    return await get_compiler_logs_v1(migration_id)
 
-@router.get("/ws/v1/migrate/{migration_id}/stream")
-async def websocket_stream_http_fallback(migration_id: str):
-    validate_migration_id(migration_id)
-    raise HTTPException(status_code=400, detail="WebSocket protocol required")
 
 @router.websocket("/ws/v1/migrate/{migration_id}/stream")
 async def websocket_stream(migration_id: str, websocket: WebSocket):

@@ -20,6 +20,29 @@ from app.workflow_engine.context import WorkflowContext
 
 logger = logging.getLogger("states")
 
+PATCH_CACHE_DIR = Path("workspace/.cache/patches")
+
+def get_cached_patch(unpatched_content: str) -> str | None:
+    try:
+        import hashlib
+        h = hashlib.sha256(unpatched_content.encode("utf-8")).hexdigest()
+        patch_file = PATCH_CACHE_DIR / f"{h}.txt"
+        if patch_file.exists():
+            return patch_file.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return None
+
+def write_cached_patch(unpatched_content: str, patched_content: str):
+    try:
+        import hashlib
+        h = hashlib.sha256(unpatched_content.encode("utf-8")).hexdigest()
+        PATCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        patch_file = PATCH_CACHE_DIR / f"{h}.txt"
+        patch_file.write_text(patched_content, encoding="utf-8")
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Unchanged stub handlers (do not modify)
@@ -72,7 +95,28 @@ async def handle_preflight(context: WorkflowContext) -> str:
     except Exception as exc:
         logger.warning("[PREFLIGHT] Failed to read migration metadata: %s", exc)
 
-    report = run_preflight(workspace_path=context.workspace_path, require_ai=True)
+    force_mock_compiler = os.getenv("USE_MOCK_COMPILER", "").strip().lower() in {"1", "true", "yes", "on"}
+    force_mock_ai = os.getenv("USE_MOCK_AI", "").strip().lower() in {"1", "true", "yes", "on"}
+    if force_mock_compiler or force_mock_ai:
+        from app.config.settings import settings
+
+        old_mock_compiler = settings.USE_MOCK_COMPILER
+        old_mock_ai = settings.USE_MOCK_AI
+        try:
+            if force_mock_compiler:
+                settings.USE_MOCK_COMPILER = True
+            if force_mock_ai:
+                settings.USE_MOCK_AI = True
+            report = run_preflight(
+                workspace_path=context.workspace_path,
+                require_ai=True,
+                run_container_checks=False,
+            )
+        finally:
+            settings.USE_MOCK_COMPILER = old_mock_compiler
+            settings.USE_MOCK_AI = old_mock_ai
+    else:
+        report = run_preflight(workspace_path=context.workspace_path, require_ai=True)
     context.preflight_report = report
 
     artifacts_dir = Path(context.workspace_path) / "artifacts"
@@ -156,6 +200,24 @@ async def handle_hipify(context: WorkflowContext) -> str:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
         logger.info("[HIPIFY] Copied non-supported file directly: %s -> %s", src, dest)
+        
+        # Translate CUDA references and compilers in build scripts (Makefile, CMakeLists, etc.)
+        filename_lower = src.name.lower()
+        if (
+            filename_lower in ("makefile", "makefile.txt", "makefile.hip", "cmakelists.txt")
+            or src.suffix.lower() in (".mk", ".cmake")
+        ):
+            try:
+                import re
+                content = dest.read_text(encoding="utf-8", errors="replace")
+                # Replace nvcc compiler references with hipcc
+                content = re.sub(r"\bnvcc\b", "hipcc", content)
+                # Replace CUDA source extensions (.cu) with HIP (.hip) in build targets
+                content = re.sub(r"\b([\w\-_./]+)\.cu\b", r"\1.hip", content)
+                dest.write_text(content, encoding="utf-8")
+                logger.info("[HIPIFY] Translated build script paths and compiler: %s", dest)
+            except Exception as build_err:
+                logger.warning("[HIPIFY] Failed to translate build script %s: %s", dest, build_err)
 
     # Process all discovered source files recursively
     primary_output_path = None
@@ -181,6 +243,25 @@ async def handle_hipify(context: WorkflowContext) -> str:
             primary_output_path = result["output_path"]
 
     context.hipify_output_path = primary_output_path
+    
+    # Save the list of generated source files to Redis and the context
+    relative_source_paths = []
+    for src in source_files:
+        rel_path = src.relative_to(input_dir)
+        if rel_path.suffix.lower() == ".cu":
+            rel_path = rel_path.with_suffix(".hip")
+        relative_source_paths.append(str(rel_path).replace("\\", "/"))
+        
+    context.source_files = relative_source_paths
+    
+    try:
+        from app.redis.client import redis_client
+        from app.redis.keys import metadata_key
+        import json
+        await redis_client.hset(metadata_key(context.migration_id), "source_files", json.dumps(relative_source_paths))
+        logger.info("[HIPIFY] Saved source_files to Redis metadata: %s", relative_source_paths)
+    except Exception as redis_err:
+        logger.warning("[HIPIFY] Failed to save source_files to Redis metadata: %s", redis_err)
     
     # Run validation and deterministic replacement step immediately after hipify completes
     try:
@@ -247,6 +328,44 @@ async def handle_sca(context: WorkflowContext) -> str:
     return "COMPILING"
 
 
+def copy_patches_to_generated(workspace_path: Path, generated_dir: Path):
+    """
+    Finds all generated patch files in workspace/patches/ and copies the latest
+    patch for each target file back to its respective location under generated/
+    so that make or hipcc compiles the latest patched code.
+    """
+    patches_dir = workspace_path / "patches"
+    if not patches_dir.exists():
+        return
+        
+    import re
+    patch_pattern = re.compile(r"^patch_attempt_(\d+)_(.+)$")
+    
+    latest_patches = {}
+    for p in patches_dir.glob("patch_attempt_*"):
+        if p.is_file():
+            match = patch_pattern.match(p.name)
+            if match:
+                attempt = int(match.group(1))
+                target_name = match.group(2)
+                if target_name not in latest_patches or attempt > latest_patches[target_name]["attempt"]:
+                    latest_patches[target_name] = {"attempt": attempt, "path": p}
+                    
+    for target_name, info in latest_patches.items():
+        patch_file = info["path"]
+        candidates = list(generated_dir.rglob(target_name))
+        if candidates:
+            for dest in candidates:
+                import shutil
+                shutil.copy2(patch_file, dest)
+                logger.info("[COMPILING] Copied latest patch %s -> %s", patch_file.name, dest)
+        else:
+            dest = generated_dir / target_name
+            import shutil
+            shutil.copy2(patch_file, dest)
+            logger.info("[COMPILING] Copied patch to generated root %s -> %s", patch_file.name, dest)
+
+
 # ---------------------------------------------------------------------------
 # COMPILING — Stage 3 of the pipeline
 # docs/26_JOB_LIFECYCLE.md §5: runs hipcc on the translated HIP file.
@@ -276,6 +395,67 @@ async def handle_compiling(context: WorkflowContext) -> str:
     generated_dir = workspace / "generated"
     logs_dir = workspace / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Ensure generated HIP files are copied into the compile workspace before make/hipcc runs
+    copy_patches_to_generated(workspace, generated_dir)
+
+    # ── Preflight check before compiling ──────────────────────────────
+    import os
+    logger.info("[COMPILING] Preflight check: current working directory: %s", os.getcwd())
+    logger.info("[COMPILING] Listing files in generated/ recursively:")
+    gen_files = list(generated_dir.rglob("*"))
+    for f in gen_files:
+        if f.is_file():
+            logger.info("  - %s", f.relative_to(generated_dir))
+            
+    # Verify every source file exists
+    source_files = getattr(context, "source_files", [])
+    if not source_files:
+        # Fallback load from Redis metadata
+        try:
+            from app.redis.client import redis_client
+            from app.redis.keys import metadata_key
+            import json
+            metadata = await redis_client.hgetall(metadata_key(context.migration_id))
+            sf_json = metadata.get("source_files")
+            if sf_json:
+                source_files = json.loads(sf_json)
+                context.source_files = source_files
+        except Exception as exc:
+            logger.warning("[COMPILING] Failed to load source_files from Redis: %s", exc)
+            
+    if source_files:
+        missing_files = []
+        for rel_path in source_files:
+            file_path = generated_dir / rel_path
+            if not file_path.exists():
+                missing_files.append(rel_path)
+                
+        if missing_files:
+            error_msg = f"Missing source files: {', '.join(missing_files)}"
+            logger.error("[COMPILING] Preflight check failed: %s", error_msg)
+            context.compilation_success = False
+            context.compiler_errors = []
+            context.last_compile_stderr = error_msg
+            context.infrastructure_error = True
+            context.error_category = "WORKSPACE_ERROR"
+            context.failure_reason = error_msg
+            raise RuntimeError(error_msg)
+
+    # Save original contents on attempt 1 (current_attempt == 0) and apply any cached successful patches
+    if context.current_attempt == 0:
+        context.original_contents = {}
+        for rel_path in source_files:
+            file_path = generated_dir / rel_path
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                context.original_contents[rel_path] = content
+                
+                # Check for and apply cached patch
+                cached_patch = get_cached_patch(content)
+                if cached_patch:
+                    file_path.write_text(cached_patch, encoding="utf-8")
+                    logger.info("[Patch Cache Hit] Automatically applied cached successful patch for: %s", rel_path)
 
     # Determine source file: check if there's a Makefile first
     hip_source = None
@@ -456,7 +636,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
         from app.compiler.error_parser import classify_compiler_error
         category = classify_compiler_error(last_stderr)
         context.error_category = category
-        if category != "USER_CODE_ERROR":
+        if category not in {"USER_CODE_ERROR", "UNSUPPORTED_FEATURE", "COMPILATION_ERROR"}:
             logger.error("[COMPILING] Non-code compile error detected: %s. Aborting to report generation.", category)
             context.infrastructure_error = True
     else:
@@ -464,6 +644,15 @@ async def handle_compiling(context: WorkflowContext) -> str:
 
     if context.compilation_success:
         logger.info("[COMPILING] Compilation succeeded on attempt %d.", attempt_num)
+        # If compilation succeeded and we had patches, save the patches to cache
+        if attempt_num > 1 and getattr(context, "original_contents", None):
+            for rel_path, original_content in context.original_contents.items():
+                file_path = generated_dir / rel_path
+                if file_path.exists():
+                    patched_content = file_path.read_text(encoding="utf-8", errors="replace")
+                    if patched_content != original_content:
+                        write_cached_patch(original_content, patched_content)
+                        logger.info("[Patch Cache Write] Successfully cached successful patch for: %s", rel_path)
     else:
         error_count = len(context.compiler_errors)
         logger.warning(
@@ -492,7 +681,7 @@ async def handle_analyzing(context: WorkflowContext) -> str:
     context.error_category = classification
 
     # Safeguard 1: Stop immediately on non-code errors
-    if classification != "USER_CODE_ERROR":
+    if classification not in {"USER_CODE_ERROR", "UNSUPPORTED_FEATURE", "COMPILATION_ERROR"}:
         logger.error("[ANALYZING] Non-code/toolchain error detected: %s. Stopping immediately.", classification)
         context.infrastructure_error = True
         context.analysis_result = {
@@ -772,6 +961,7 @@ async def handle_researching(context: WorkflowContext) -> str:
         # Per docs/11_RESEARCH_AGENT.md Failure Handling:
         # "Record the failure. Continue according to the Workflow Engine. Research failure must never corrupt the migration process."
         context.research_context = "Research failed to complete."
+        context.current_attempt += 1
         return "COMPILING"
 
     # 4. Format findings to store in context.research_context
@@ -805,6 +995,7 @@ async def handle_researching(context: WorkflowContext) -> str:
         })
 
     logger.info("[RESEARCHING] Research stored in context and migration journal.")
+    context.current_attempt += 1
     return "COMPILING"
 
 

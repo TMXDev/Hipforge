@@ -90,6 +90,40 @@ def write_compilation_cache(source_path: str, target_arch: str, result: dict, bi
         logger.warning(f"Failed to write to compilation cache: {e}")
 
 
+def check_makefile_filenames_differ(makefile_path: Path, generated_dir: Path) -> bool:
+    """
+    Checks if the Makefile references source files (like .cu or .hip)
+    that do not exist in the generated directory.
+    """
+    try:
+        if not makefile_path.exists():
+            return True
+        content = makefile_path.read_text(encoding="utf-8", errors="replace")
+        import re
+        # Find all words ending with .cu, .hip, .cpp, .cc, .cuh, .h, .hpp
+        referenced_files = re.findall(r"\b([\w\-_./]+)\.(cu|hip|cpp|cc|cuh|h|hpp)\b", content)
+        makefile_dir = makefile_path.parent
+        for name, ext in referenced_files:
+            filename = f"{name}.{ext}"
+            
+            # Skip compiler names or phony/make targets
+            if filename.lower() in ("makefile", "clean", "all", "cuda", "hip", "nvcc", "hipcc", "clang", "gcc", "g++"):
+                continue
+                
+            # Check relative to Makefile directory
+            file_path = makefile_dir / filename
+            if not file_path.exists():
+                # Check recursively in generated_dir
+                base = os.path.basename(filename)
+                matches = list(generated_dir.rglob(base))
+                if not matches:
+                    logger.info("[COMPILING] Makefile references non-existent file: %s (base: %s)", filename, base)
+                    return True
+    except Exception as e:
+        logger.warning("Error checking Makefile filenames: %s", e)
+    return False
+
+
 class HipccRunner:
     """Real runner that executes the actual hipcc compiler tool."""
     
@@ -201,11 +235,22 @@ class HipccRunner:
                 workspace_path = parts[0] + "/migration_" + subparts[0]
             else:
                 workspace_path = str(Path(source_path).parent.parent)
-        if os.path.basename(source_path).lower() in ("makefile", "makefile.txt", "makefile.hip"):
+        # Check if source_path is a Makefile
+        is_makefile = os.path.basename(source_path).lower() in ("makefile", "makefile.txt", "makefile.hip")
+        
+        # Check if Makefile filenames differ from actual files on disk
+        filenames_differ = False
+        if is_makefile and workspace_path:
+            generated_dir = Path(workspace_path) / "generated"
+            filenames_differ = check_makefile_filenames_differ(Path(source_path), generated_dir)
+            if filenames_differ:
+                logger.warning("[COMPILING] Makefile references source files that do not exist. Falling back to direct hipcc compilation.")
+            
+        if is_makefile and not filenames_differ:
             cmd = ["make"]
             working_dir = os.path.dirname(os.path.abspath(source_path))
         else:
-            compile_sources = [source_path]
+            compile_sources = []
             include_dirs = []
             if workspace_path:
                 generated_dir = Path(workspace_path) / "generated"
@@ -214,11 +259,23 @@ class HipccRunner:
                     project_sources = []
                     for suffix in ("*.hip", "*.cpp", "*.cc", "*.cxx"):
                         project_sources.extend(str(p) for p in generated_dir.rglob(suffix))
+                    
+                    project_sources = sorted(set(project_sources))
                     if project_sources:
-                        compile_sources = sorted(set(project_sources))
+                        source_basename = os.path.basename(source_path)
+                        for p in project_sources:
+                            if source_basename.endswith(os.path.basename(p)):
+                                compile_sources.append(source_path)
+                            else:
+                                compile_sources.append(p)
+                    else:
+                        compile_sources = [source_path]
+                    
                     include_dirs.append(str(generated_dir))
                     if generated_include.exists():
                         include_dirs.append(str(generated_include))
+            else:
+                compile_sources = [source_path]
 
             cmd = ["hipcc", *compile_sources]
             for include_dir in include_dirs:
@@ -234,6 +291,14 @@ class HipccRunner:
             errors = []
             if not success:
                 errors = parse_compiler_errors(sandbox_res["stderr"])
+                if not errors:
+                    errors.append(CompilerError(
+                        file=source_path,
+                        line=1,
+                        column=1,
+                        message=sandbox_res["stderr"] or sandbox_res["stdout"] or "Compilation failed with unknown error.",
+                        code="E999"
+                    ))
                 
             return {
                 "success": success,

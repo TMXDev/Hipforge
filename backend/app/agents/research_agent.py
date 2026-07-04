@@ -31,8 +31,8 @@ from app.agents.base_agent import get_ai_client
 
 logger = logging.getLogger("research_agent")
 
-# Model selection (using Qwen for reasoning/documentation lookup tasks)
-RESEARCH_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/qwen2p5-coder-32b-instruct")
+# Model selection for reasoning/documentation lookup tasks.
+RESEARCH_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/deepseek-v4-flash")
 
 # ---------------------------------------------------------------------------
 # Prompt template — exact 6-section structure from docs/09_AI_AGENTS.md

@@ -220,8 +220,15 @@ def draw_stage_pipeline(active_stage: str):
             formatted.append(f"{Colors.BOLD}{Colors.GOLD}[{stage}]{Colors.ENDC}")
         else:
             formatted.append(f"{Colors.DARK_GRAY}[{stage}]{Colors.ENDC}")
-            
-    print(f"\rPipeline: {' ──► '.join(formatted)}", end="", flush=True)
+    arrow = " -> "
+    try:
+        if sys.stdout.encoding:
+            " ──► ".encode(sys.stdout.encoding)
+            arrow = " ──► "
+    except Exception:
+        pass
+        
+    print(f"\rPipeline: {arrow.join(formatted)}", end="", flush=True)
 
 async def stream_logs(host_url: str, migration_id: str):
     """Connects to WebSocket and streams migration logs live."""
@@ -262,10 +269,8 @@ async def stream_logs(host_url: str, migration_id: str):
                             print(f"  {Colors.GREEN}{msg}{Colors.ENDC}")
                         stage_upper = (stage or "").upper()
                         status_upper = (status or "").upper()
-                        if stage_upper in ("COMPLETED", "FAILED") and status_upper in ("COMPLETED", "FAILED"):
+                        if stage_upper in ("COMPLETED", "FAILED"):
                             return stage_upper
-                        if status_upper in ("COMPLETED", "FAILED"):
-                            return status_upper
                     elif m_type in ("log", "compiler_log"):
                         msg = (data.get("message") or data.get("content") or "").strip()
                         if msg:

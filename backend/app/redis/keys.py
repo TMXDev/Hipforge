@@ -54,19 +54,3 @@ def agents_channel(migration_id: str) -> str:
     """Returns the channel name for streaming AI agent activity updates."""
     return f"migration:{migration_id}:agents"
 
-
-# Aliases with 'get_' prefix to support alternative import preferences
-get_pending_queue_key = pending_queue_key
-get_active_queue_key = active_queue_key
-get_status_key = status_key
-get_attempt_key = attempt_key
-get_retry_budget_key = retry_budget_key
-get_compiler_log_key = compiler_log_key
-get_analysis_key = analysis_key
-get_patch_key = patch_key
-get_research_key = research_key
-get_journal_key = journal_key
-get_metadata_key = metadata_key
-get_events_channel = events_channel
-get_compiler_channel = compiler_channel
-get_agents_channel = agents_channel

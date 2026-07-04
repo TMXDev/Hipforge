@@ -87,6 +87,10 @@ TOTAL_COMPONENTS=0
 # Test Backend Component
 test_component "Backend" 'python3 - << PYTHON_EOF
 import sys
+
+# Set PYTHONPATH to include backend directory
+sys.path.insert(0, "backend")
+
 import asyncio
 
 try:
@@ -111,8 +115,12 @@ TOTAL_COMPONENTS=$((TOTAL_COMPONENTS + 1))
 
 # Test Worker Component
 test_component "Worker" 'python3 - << PYTHON_EOF'
-import asyncio
 import sys
+
+# Set PYTHONPATH to include backend directory
+sys.path.insert(0, "backend")
+
+import asyncio
 from pathlib import Path
 
 # Check if worker script exists

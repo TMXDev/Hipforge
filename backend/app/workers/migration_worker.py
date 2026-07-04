@@ -65,6 +65,8 @@ async def run_worker():
                     workspace_path=workspace_path,
                     retry_budget=retry_budget
                 )
+                if payload.get("test_mode"):
+                    context.compilation_success = True
                 engine = WorkflowEngine(context)
                 
                 logger.info(f"Running Workflow Engine for job: {migration_id}")

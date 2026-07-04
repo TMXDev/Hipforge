@@ -22,67 +22,7 @@ import app.redis.publisher
 import app.redis.subscriber
 
 
-# ---------------------------------------------------------------------------
-# MockRedis Implementation
-# ---------------------------------------------------------------------------
-
-class MockRedis:
-    def __init__(self):
-        self.db = {}
-        self.pubsub_channels = {}
-
-    async def ping(self):
-        return True
-
-    async def delete(self, *keys):
-        for key in keys:
-            self.db.pop(key, None)
-
-    async def set(self, key, value):
-        self.db[key] = value
-        return True
-
-    async def get(self, key):
-        return self.db.get(key)
-
-    async def publish(self, channel, message):
-        if channel in self.pubsub_channels:
-            count = 0
-            for queue in self.pubsub_channels[channel]:
-                await queue.put({"type": "message", "channel": channel, "data": message})
-                count += 1
-            return count
-        return 0
-
-    def pubsub(self):
-        return MockPubSub(self)
-
-
-class MockPubSub:
-    def __init__(self, client):
-        self.client = client
-        self.channels = []
-        self.queue = asyncio.Queue()
-
-    async def subscribe(self, channel):
-        self.channels.append(channel)
-        if channel not in self.client.pubsub_channels:
-            self.client.pubsub_channels[channel] = []
-        self.client.pubsub_channels[channel].append(self.queue)
-
-    async def get_message(self, ignore_subscribe_messages=False, timeout=0):
-        try:
-            if timeout > 0:
-                return await asyncio.wait_for(self.queue.get(), timeout=timeout)
-            return self.queue.get_nowait()
-        except (asyncio.QueueEmpty, asyncio.TimeoutError):
-            return None
-
-    async def unsubscribe(self, channel=None):
-        pass
-
-    async def aclose(self):
-        pass
+from tests.conftest import MockRedis
 
 
 @pytest.fixture(autouse=True)

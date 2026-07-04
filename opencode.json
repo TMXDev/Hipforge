@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "enabled": true
+    }
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 10000
+  },
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      "frontend/node_modules/**",
+      ".next/**",
+      "frontend/.next/**",
+      "backend/venv/**",
+      "venv/**",
+      "__pycache__/**",
+      ".git/**",
+      "workspace/**/logs/**",
+      "workspace/**/exports/**",
+      "workspace/**/.cache/**"
+    ]
+  }
+}

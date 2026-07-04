@@ -82,7 +82,7 @@ log "✓ Backend setup complete"
 # Phase 2: Frontend setup
 log "Phase 2: Setting up frontend..."
 
-if [ ! -d "frontend/node_modules" ] && command -v npm >/dev-default 2>&1; then
+if [ ! -d "frontend/node_modules" ] && command -v npm >/dev/null 2>&1; then
     log "Installing frontend dependencies..."
     cd frontend || {
         warn "Cannot navigate to frontend directory. Skipping frontend setup."
@@ -91,7 +91,7 @@ if [ ! -d "frontend/node_modules" ] && command -v npm >/dev-default 2>&1; then
     npm install
     cd "$ORIGINAL_DIR"
 else
-    if [ -d "frontend/node_modules" ]; in
+    if [ -d "frontend/node_modules" ]; then
         log "Frontend node_modules already exists"
     else
         warn "Frontend dependencies may need manual installation."
@@ -145,7 +145,7 @@ mkdir -p workspace/2026/patches
 mkdir -p workspace/2026/reports
 
 # Create a test CUDA file (only if no existing input)
-if [ ! -f "workspace/2026/input/*.cu" ] && [ ! -f "workspace/2026/input/*.hip" ]; then
+if ! compgen -G "workspace/2026/input/*.cu" > /dev/null && ! compgen -G "workspace/2026/input/*.hip" > /dev/null; then
     cat > workspace/2026/input/test_project.cu <<'EOF'
 #include <cuda_runtime.h>
 #include <stdio.h>

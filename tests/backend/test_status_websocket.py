@@ -14,78 +14,6 @@ from app.redis.publisher import publish_event
 
 client = TestClient(fastapi_app)
 
-def patch_mock_redis_full(redis_client):
-    if not redis_client:
-        return
-    if not (hasattr(redis_client, "lists") or hasattr(redis_client, "db")):
-        return
-        
-    cls = redis_client.__class__
-    db_attr = "lists" if hasattr(redis_client, "lists") else "db"
-    
-    if not hasattr(cls, "get"):
-        async def mock_get(self, key: str):
-            db = getattr(self, db_attr)
-            val = db.get(key)
-            if isinstance(val, list):
-                return None
-            return val
-        cls.get = mock_get
-        
-    if not hasattr(cls, "set"):
-        async def mock_set(self, key: str, value: str):
-            db = getattr(self, db_attr)
-            db[key] = value
-            return True
-        cls.set = mock_set
-        
-    if not hasattr(cls, "hset"):
-        async def mock_hset(self, key: str, mapping: dict = None, **kwargs):
-            db = getattr(self, db_attr)
-            if key not in db:
-                db[key] = {}
-            if not isinstance(db[key], dict):
-                db[key] = {}
-            if mapping:
-                db[key].update(mapping)
-            if kwargs:
-                db[key].update(kwargs)
-            return len(mapping) if mapping else 0
-        cls.hset = mock_hset
-        
-    if not hasattr(cls, "hgetall"):
-        async def mock_hgetall(self, key: str):
-            db = getattr(self, db_attr)
-            val = db.get(key)
-            if isinstance(val, dict):
-                return val
-            return {}
-        cls.hgetall = mock_hgetall
-        
-    if not hasattr(cls, "rpush"):
-        async def mock_rpush(self, key: str, value: str) -> int:
-            db = getattr(self, db_attr)
-            if key not in db:
-                db[key] = []
-            if not isinstance(db[key], list):
-                db[key] = [db[key]]
-            db[key].append(value)
-            return len(db[key])
-        cls.rpush = mock_rpush
-        
-    if not hasattr(cls, "llen"):
-        async def mock_llen(self, key: str) -> int:
-            db = getattr(self, db_attr)
-            val = db.get(key)
-            if isinstance(val, list):
-                return len(val)
-            return 0
-        cls.llen = mock_llen
-
-@pytest.fixture(autouse=True)
-def setup_mock_redis_methods(redis_test_client):
-    patch_mock_redis_full(redis_test_client)
-    yield
 
 @pytest.fixture()
 def mock_migration_id():
@@ -167,7 +95,7 @@ async def test_get_status_completed(redis_test_client, mock_migration_id):
     await app.redis.client.redis_client.hset(metadata_key(mock_migration_id), mapping=metadata)
     
     # Request status
-    response = client.get(f"/api/v1/migrate/{mock_migration_id}")
+    response = client.get(f"/api/v1/migrate/{mock_migration_id}/status")
     assert response.status_code == 200
     
     data = response.json()
@@ -190,9 +118,9 @@ async def test_websocket_stream_events(redis_test_client):
             assert conn_msg["type"] == "connected"
             assert conn_msg["migration_id"] == migration_id
             
-            # Receive 10 stages
+            # Receive all lifecycle stages
             stages_received = []
-            for i in range(10):
+            for i in range(11):
                 print(f"[Client] Waiting for stage {i+1}...")
                 msg = ws.receive_json()
                 print(f"[Client] Received stage {i+1}: {msg}")
@@ -250,4 +178,3 @@ async def test_websocket_stream_events(redis_test_client):
     except asyncio.TimeoutError:
         print("[Test] TIMEOUT waiting for client thread future!")
         raise
-

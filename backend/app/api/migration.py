@@ -128,10 +128,5 @@ async def get_migration_journal_v1(migration_id: str):
     return await get_journal(migration_id)
 
 
-@router.get("/migrate/{migration_id}/journal")
-async def get_migration_journal_fallback(migration_id: str):
-    validate_migration_id(migration_id)
-    return await get_migration_journal_v1(migration_id)
-
 
 

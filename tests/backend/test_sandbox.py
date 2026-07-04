@@ -38,7 +38,8 @@ def test_run_sandboxed_compiler_success():
         
         # Verify run configuration
         called_args, called_kwargs = mock_client.containers.run.call_args
-        assert called_kwargs["image"] == "rocm/dev-ubuntu-22.04"
+        from app.config.settings import settings
+        assert called_kwargs["image"] == settings.SANDBOX_IMAGE
         assert called_kwargs["runtime"] == "runsc"
         assert called_kwargs["mem_limit"] == "2g"
         assert called_kwargs["nano_cpus"] == 2000000000
@@ -48,9 +49,10 @@ def test_run_sandboxed_compiler_success():
         
         # Verify volume mounts
         volumes = called_kwargs["volumes"]
-        assert volumes[os.path.abspath("/mock/workspace/input")]["mode"] == "ro"
-        assert volumes[os.path.abspath("/mock/workspace/generated")]["mode"] == "rw"
-        assert volumes[os.path.abspath("/mock/workspace/logs")]["mode"] == "rw"
+        norm_volumes = {k.replace("\\", "/"): v for k, v in volumes.items()}
+        assert norm_volumes[os.path.abspath("/mock/workspace/input").replace("\\", "/")]["mode"] == "ro"
+        assert norm_volumes[os.path.abspath("/mock/workspace/generated").replace("\\", "/")]["mode"] == "rw"
+        assert norm_volumes[os.path.abspath("/mock/workspace/logs").replace("\\", "/")]["mode"] == "rw"
         
         # Verify cleanup was triggered
         mock_container.remove.assert_called_once_with(force=True)

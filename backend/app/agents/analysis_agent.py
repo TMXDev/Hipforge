@@ -38,7 +38,7 @@ logger = logging.getLogger("analysis_agent")
 # ---------------------------------------------------------------------------
 # Model selection (per docs/04_TECHNOLOGY_DECISIONS.md)
 # ---------------------------------------------------------------------------
-ANALYSIS_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/qwen2p5-coder-32b-instruct")
+ANALYSIS_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/deepseek-v4-flash")
 
 # ---------------------------------------------------------------------------
 # Prompt template — exact 6-section structure from docs/09_AI_AGENTS.md

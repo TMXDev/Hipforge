@@ -67,6 +67,18 @@ def get_decoded_file_size_and_content(file_str: str) -> tuple[int, bytes]:
         encoded = file_str.encode('utf-8')
         return len(encoded), encoded
 
+def decode_file_content(file_str: str) -> str:
+    """
+    Decodes the source file content. Handles data URLs, raw base64, 
+    and falls back to writing the string directly if decoding fails.
+    """
+    _, content_bytes = get_decoded_file_size_and_content(file_str)
+    try:
+        return content_bytes.decode("utf-8")
+    except Exception:
+        return file_str
+
+
 def validate_zip_archive(zip_bytes: bytes) -> None:
     """
     Validates zip archive integrity and scans for path traversal attempts inside.

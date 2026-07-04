@@ -45,7 +45,7 @@ logger = logging.getLogger("patch_agent")
 # Model selection (per docs/04_TECHNOLOGY_DECISIONS.md)
 # Kimi K2 is optimized for code generation and editing.
 # ---------------------------------------------------------------------------
-PATCH_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/qwen2p5-coder-32b-instruct")
+PATCH_MODEL = os.getenv("FIREWORKS_MODEL", "accounts/fireworks/models/deepseek-v4-flash")
 
 # ---------------------------------------------------------------------------
 # Prompt template — exact 6-section structure from docs/09_AI_AGENTS.md

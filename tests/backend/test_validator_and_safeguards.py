@@ -155,30 +155,38 @@ def test_compiler_caching(tmp_path):
     
     # Enable mock compiler environment
     os.environ["USE_MOCK_COMPILER"] = "true"
+    old_cache_setting = os.environ.get("DISABLE_COMPILER_CACHE")
+    os.environ["DISABLE_COMPILER_CACHE"] = "false"
     
-    # Ensure cache directory is empty for this test
-    if CACHE_DIR.exists():
-        shutil.rmtree(CACHE_DIR)
+    try:
+        # Ensure cache directory is empty for this test
+        if CACHE_DIR.exists():
+            shutil.rmtree(CACHE_DIR)
+            
+        # First compilation (cache miss)
+        runner = HipccRunner()
+        res1 = runner.run_hipcc(str(source_file), str(output_bin), target_arch="gfx90a")
+        assert res1["success"] is True
+        assert "[Cache Hit]" not in res1["stdout"]
+        assert Path(output_bin).exists()
         
-    # First compilation (cache miss)
-    runner = HipccRunner()
-    res1 = runner.run_hipcc(str(source_file), str(output_bin), target_arch="gfx90a")
-    assert res1["success"] is True
-    assert "[Cache Hit]" not in res1["stdout"]
-    assert Path(output_bin).exists()
-    
-    # Remove the output binary manually to verify caching restores it
-    Path(output_bin).unlink()
-    
-    # Second compilation (cache hit)
-    res2 = runner.run_hipcc(str(source_file), str(output_bin), target_arch="gfx90a")
-    assert res2["success"] is True
-    assert "[Cache Hit]" in res2["stdout"]
-    assert Path(output_bin).exists()
-    
-    # Clean up the cache directory
-    if CACHE_DIR.exists():
-        shutil.rmtree(CACHE_DIR)
+        # Remove the output binary manually to verify caching restores it
+        Path(output_bin).unlink()
+        
+        # Second compilation (cache hit)
+        res2 = runner.run_hipcc(str(source_file), str(output_bin), target_arch="gfx90a")
+        assert res2["success"] is True
+        assert "[Cache Hit]" in res2["stdout"]
+        assert Path(output_bin).exists()
+        
+        # Clean up the cache directory
+        if CACHE_DIR.exists():
+            shutil.rmtree(CACHE_DIR)
+    finally:
+        if old_cache_setting is None:
+            os.environ.pop("DISABLE_COMPILER_CACHE", None)
+        else:
+            os.environ["DISABLE_COMPILER_CACHE"] = old_cache_setting
 
 
 def test_scan_ast_for_cuda_apis(tmp_path):

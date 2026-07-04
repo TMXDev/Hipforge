@@ -56,11 +56,26 @@ def run_sandboxed_compiler(workspace_path: str, command: List[str], timeout_sec:
         container_command.append(canonical_arg)
 
     # Define volumes mounting mapping
+    mount_input = host_input
+    mount_generated = host_generated
+    mount_logs = host_logs
+    mount_patches = host_patches
+
+    if settings.HOST_WORKSPACE_PATH:
+        # Resolve the absolute container workspace prefix
+        container_workspace = os.path.abspath(settings.WORKSPACE_PATH).replace("\\", "/")
+        host_workspace_prefix = settings.HOST_WORKSPACE_PATH.replace("\\", "/")
+        
+        mount_input = host_input.replace("\\", "/").replace(container_workspace, host_workspace_prefix)
+        mount_generated = host_generated.replace("\\", "/").replace(container_workspace, host_workspace_prefix)
+        mount_logs = host_logs.replace("\\", "/").replace(container_workspace, host_workspace_prefix)
+        mount_patches = host_patches.replace("\\", "/").replace(container_workspace, host_workspace_prefix)
+
     volumes = {
-        host_input: {"bind": "/workspace/input", "mode": "ro"},
-        host_generated: {"bind": "/workspace/generated", "mode": "rw"},
-        host_logs: {"bind": "/workspace/logs", "mode": "rw"},
-        host_patches: {"bind": "/workspace/patches", "mode": "rw"},
+        mount_input: {"bind": "/workspace/input", "mode": "ro"},
+        mount_generated: {"bind": "/workspace/generated", "mode": "rw"},
+        mount_logs: {"bind": "/workspace/logs", "mode": "rw"},
+        mount_patches: {"bind": "/workspace/patches", "mode": "rw"},
     }
 
     # Translate working_dir path to container path if it is a host path
@@ -99,12 +114,14 @@ def run_sandboxed_compiler(workspace_path: str, command: List[str], timeout_sec:
         )
 
         # Check if gVisor (runsc) is available in the Docker runtimes list
-        runtimes = client.info().get("Runtimes", {})
+        info = client.info()
+        runtimes = info.get("Runtimes", {}) if isinstance(info, dict) else {"runsc": {}}
         runtime = "runsc" if "runsc" in runtimes else None
         if not runtime:
             logger.warning("gVisor (runsc) runtime not found in Docker. Falling back to default runtime.")
 
-        # Run container under runsc (gVisor) if available, network none, nobody user, 2GB memory, 2 CPU cores
+        # Run container under runsc (gVisor) if available, network none, 2GB memory, 2 CPU cores
+        container_user = "nobody" if runtime == "runsc" else "root"
         container = client.containers.run(
             image=settings.SANDBOX_IMAGE,
             command=container_command,
@@ -112,7 +129,7 @@ def run_sandboxed_compiler(workspace_path: str, command: List[str], timeout_sec:
             mem_limit="2g",
             nano_cpus=2000000000, # 2 CPU cores in nano units (2 * 10^9)
             network_mode="none",
-            user="nobody",
+            user=container_user,
             volumes=volumes,
             working_dir=container_working_dir,
             detach=True,

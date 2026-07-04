@@ -27,7 +27,7 @@ if (-not $pythonExe) {
     exit 1
 }
 
-Write-Host "Using Python: $(&$pythonExe --version)"
+Write-Host "Using Python: $(& $pythonExe --version)"
 
 # Store original directory
 $originalDir = Get-Location
@@ -49,7 +49,7 @@ if (Test-Path "venv" -PathType Container) {
     $env:VIRTUAL_ENV = (Get-Item "venv").FullName
 } else {
     log "Creating backend Python virtual environment..."
-    &pythonExe -m venv venv
+    & $pythonExe -m venv venv
     if (Test-Path "venv" -PathType Container) {
         $env:VIRTUAL_ENV = (Get-Item "venv").FullName
         log "Virtual environment created"
@@ -62,10 +62,10 @@ if (Test-Path "venv" -PathType Container) {
 
 # Install/upgrade pip
 log "Installing/updating Python dependencies..."
-&pythonExe -m pip install --upgrade pip
+& $pythonExe -m pip install --upgrade pip
 
 if (Test-Path "requirements.txt") {
-    &pythonExe -m pip install --no-cache-dir -r requirements.txt
+    & $pythonExe -m pip install --no-cache-dir -r requirements.txt
 } else {
     error "backend/requirements.txt not found. Cannot install dependencies."
     Set-Location "$originalDir"
@@ -73,7 +73,7 @@ if (Test-Path "requirements.txt") {
 }
 
 Set-Location "$originalDir"
-log "✓ Backend setup complete"
+log "OK Backend setup complete"
 
 # Phase 2: Frontend setup (optional)
 log "Phase 2: Setting up frontend..."
@@ -85,7 +85,7 @@ if (Test-Path "frontend" -PathType Container) {
     } else {
         log "Installing frontend dependencies..."
         if (Get-Command npm -ErrorAction SilentlyContinue) {
-            &npm install
+            & npm install
         } else {
             warn "npm not found. Install Node.js to install frontend dependencies."
         }
@@ -110,27 +110,28 @@ if (-not (Test-Path ".env")) {
         exit 1
     }
 } else {
-    log "✓ .env file exists"
+    log "OK .env file exists"
 }
 
 # Check critical environment variables
-criticalVars = @("FIREWORKS_API_KEY", "REDIS_URL", "WORKSPACE_PATH")
+$criticalVars = @("FIREWORKS_API_KEY", "REDIS_URL", "WORKSPACE_PATH")
 $missingVars = @()
+$content = if (Test-Path ".env") { Get-Content ".env" -Raw } else { "" }
 
 foreach ($var in $criticalVars) {
     if (-not (Test-Path ".env")) {
         continue
     }
     
-    $content = Get-Content ".env" -Raw
-    if ($content -notmatch "^$var=") {
+    $match = [regex]::Match($content, "(?m)^$([regex]::Escape($var))=(.*)$")
+    if (-not $match.Success) {
         $missingVars += $var
     } else {
-        $value = ($content -match "^$var=(.*)") [0]
-        if ($value -eq "your_fireworks_api_key" -or [string]::IsNullOrEmpty $value) {
+        $value = $match.Groups[1].Value.Trim()
+        if ($value -eq "your_fireworks_api_key" -or [string]::IsNullOrEmpty($value)) {
             warn "Environment variable $var is unset or still set to default placeholder"
         } else {
-            log "✓ $var is set"
+            log "OK $var is set"
         }
     }
 }
@@ -155,14 +156,14 @@ $inputDir = "$workspaceDir/input"
 New-Item -ItemType Directory -Path $inputDir -Force | Out-Null
 
 New-Item -ItemType Directory -Path "$workspaceDir/exports" -Force | Out-Null
-New-Item -ItemSet "workspace/logs" -PathType Container -Force | Out-Null
-New-Item -Path "workspace/artifacts" -ItemType Directory -Force | Out-Null
-New-Item -Path "workspace/generated" -ItemType Directory -Force | Out-Null
-New-Item -Path "workspace/patches" -ItemType Directory -Force | Out-Null
-New-Item -Path "workspace/reports" -ItemType Directory -Force | Out-Null
+New-Item -ItemType Directory -Path "workspace/logs" -Force | Out-Null
+New-Item -ItemType Directory -Path "workspace/artifacts" -Force | Out-Null
+New-Item -ItemType Directory -Path "workspace/generated" -Force | Out-Null
+New-Item -ItemType Directory -Path "workspace/patches" -Force | Out-Null
+New-Item -ItemType Directory -Path "workspace/reports" -Force | Out-Null
 
 # Create a test CUDA file
-cat <<'EOF' > "$workspaceDir/input/test_cuda.cu"
+@'
 #include <cuda_runtime.h>
 #include <stdio.h>
 
@@ -204,9 +205,9 @@ int main() {
 
     return 0;
 }
-EOF
+'@ | Set-Content -Path (Join-Path $inputDir "test_cuda.cu") -Encoding UTF8
 
-log "✓ Created test CUDA project"
+log "OK Created test CUDA project"
 
 # Phase 5: Docker Compose verification
 log "Phase 5: Checking Docker Compose configuration..."

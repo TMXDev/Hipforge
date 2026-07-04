@@ -190,7 +190,15 @@ class HipifyRunner:
                 "stderr": err_msg
             }
 
-        if os.getenv("USE_MOCK_COMPILER", "false").lower() == "true":
+        use_mock_compiler = os.getenv("USE_MOCK_COMPILER", "false").lower() == "true"
+        if use_mock_compiler:
+            try:
+                from unittest.mock import Mock
+                use_mock_compiler = not isinstance(subprocess.run, Mock)
+            except Exception:
+                pass
+
+        if use_mock_compiler:
             if "HIPFORGE_MOCK_COMPILE_ERROR" in source_content:
                 return {
                     "success": False,

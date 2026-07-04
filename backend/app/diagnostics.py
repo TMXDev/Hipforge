@@ -576,7 +576,7 @@ def run_preflight(
         else:
             status = PASS if value else FAIL
             message = f"{name} found at {value}." if value else f"{name} was not found in the sandbox."
-            critical = True
+            critical = False if check_id in {"cuda_toolkit", "cuda_runtime_header", "libdevice"} else True
         _add_check(
             checks,
             check_id,
@@ -704,13 +704,23 @@ def run_preflight(
                     "messages": [{"role": "user", "content": "Return OK."}],
                     "max_tokens": 4,
                 }
-                data = _fireworks_request(
-                    f"{settings.FIREWORKS_API_BASE}/chat/completions",
-                    api_key,
-                    method="POST",
-                    payload=payload,
-                    timeout=20,
-                )
+                try:
+                    data = _fireworks_request(
+                        f"{settings.FIREWORKS_API_BASE}/chat/completions",
+                        api_key,
+                        method="POST",
+                        payload=payload,
+                        timeout=20,
+                    )
+                except urllib.error.HTTPError as exc:
+                    if exc.code == 404:
+                        return (
+                            FAIL,
+                            f"Fireworks model {settings.FIREWORKS_MODEL} is not accessible from chat/completions.",
+                            "Set FIREWORKS_MODEL to a serverless-accessible model or deploy the configured model in Fireworks.",
+                            {"model": settings.FIREWORKS_MODEL, "http_status": exc.code},
+                        )
+                    raise
                 if data.get("choices"):
                     return PASS, "Selected Fireworks model returned successfully.", "", {"model": settings.FIREWORKS_MODEL}
                 return FAIL, "Selected Fireworks model did not return a completion.", "Verify FIREWORKS_MODEL and account access.", {"response": data}

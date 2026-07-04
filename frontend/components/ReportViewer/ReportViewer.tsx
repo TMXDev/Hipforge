@@ -112,6 +112,27 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
   const isCompleted = statusStr === "COMPLETED" || statusStr === "FAILED";
   const isSuccess = statusStr === "COMPLETED";
 
+  const handleDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    const downloadUrl = getDownloadUrl(migrationId);
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) throw new Error("Download failed");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `hipforge-${migrationId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to download package:", err);
+      window.open(downloadUrl, "_blank");
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Summary panel */}
@@ -226,6 +247,7 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
         <a
           id="report-download-zip-button"
           href={getDownloadUrl(migrationId)}
+          onClick={handleDownload}
           download={`hipforge-${migrationId}.zip`}
           className="btn-primary w-full"
           aria-label="Download migration ZIP archive"

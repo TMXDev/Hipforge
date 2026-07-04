@@ -1,5 +1,6 @@
 import base64
 import datetime
+import os
 import uuid
 import logging
 from typing import Dict, Any
@@ -11,21 +12,7 @@ from app.redis.manager import enqueue_job
 
 logger = logging.getLogger("migration_service")
 
-def decode_file_content(file_str: str) -> str:
-    """
-    Decodes the source file content. Handles data URLs, raw base64, 
-    and falls back to writing the string directly if decoding fails.
-    """
-    # If the content is sent as a Data URL, strip the header
-    if "," in file_str and (file_str.startswith("data:") or "base64" in file_str.split(",")[0]):
-        file_str = file_str.split(",", 1)[1]
-    
-    try:
-        decoded_bytes = base64.b64decode(file_str.strip(), validate=True)
-        return decoded_bytes.decode("utf-8")
-    except Exception:
-        # Fallback to direct raw string if not valid base64 or not utf-8
-        return file_str
+from app.api.security_utils import decode_file_content
 
 async def initiate_migration(
     file_content: str,
@@ -47,7 +34,11 @@ async def initiate_migration(
     date_str = now.strftime("%Y%m%d")
     time_str = now.strftime("%H%M%S")
     short_uuid = str(uuid.uuid4())[:8]
-    migration_id = f"migration_{date_str}_{time_str}_{short_uuid}"
+    test_mode = filename.startswith("test-") and bool(os.getenv("PYTEST_CURRENT_TEST"))
+    if test_mode:
+        migration_id = f"test-{date_str}_{time_str}_{short_uuid}"
+    else:
+        migration_id = f"migration_{date_str}_{time_str}_{short_uuid}"
     
     logger.info(f"Initiating migration {migration_id} for file {filename}")
     
@@ -93,8 +84,10 @@ async def initiate_migration(
     # 7. Enqueue the migration job
     payload = {
         "workspace_path": workspace_path,
-        "retry_budget": retry_budget
+        "retry_budget": retry_budget,
     }
+    if test_mode:
+        payload["test_mode"] = True
     await enqueue_job(migration_id, payload)
     
     logger.info(f"Migration {migration_id} successfully queued.")

@@ -197,10 +197,101 @@ class FireworksClient:
 # Factory function — always use this; never instantiate a client directly
 # ---------------------------------------------------------------------------
 
-def get_ai_client() -> FireworksClient:
+class MockFireworksClient(FireworksClient):
     """
-    Return the active production FireworksClient.
+    Offline Fireworks-compatible client used for tests and demo/mock mode.
     """
+
+    def __init__(self):
+        pass
+
+    def chat_completion(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 2048,
+    ) -> Dict[str, Any]:
+        system_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "system").lower()
+        user_text = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
+        user_lower = user_text.lower()
+
+        if "research agent" in system_text or "documentation" in system_text:
+            content = {
+                "summary": "ROCm documentation confirms a portable HIP replacement strategy.",
+                "problem": "A CUDA API or warp-level assumption needs a HIP-compatible equivalent.",
+                "sources": ["https://rocm.docs.amd.com/projects/HIP/en/latest/"],
+                "findings": [
+                    "ROCm documentation confirms HIP APIs should use hip/hip_runtime.h and HIP runtime types.",
+                    "Wavefront-sensitive code should avoid hard-coding NVIDIA warp width assumptions.",
+                ],
+                "recommended_actions": [
+                    "Use HIP runtime APIs and compile for the requested AMD GPU architecture.",
+                    "Re-run semantic validation after the patch to catch portability issues.",
+                ],
+                "confidence": 0.86,
+            }
+        elif "analysis agent" in system_text or "root cause" in user_lower:
+            content = {
+                "summary": "Compilation failed after CUDA-to-HIP translation and needs a targeted source patch.",
+                "root_cause": "The translated source still contains an API or semantic pattern that HIP cannot compile as written.",
+                "affected_files": ["kernel.hip"],
+                "affected_lines": [1],
+                "confidence": 0.82,
+                "repair_plan": [
+                    "Replace remaining CUDA-only APIs with HIP equivalents.",
+                    "Preserve the existing kernel structure and retry compilation.",
+                ],
+            }
+        elif "patch agent" in system_text or "source code" in user_lower:
+            content = user_text
+            if "```hip" in content:
+                content = content.split("```hip", 1)[1].split("```", 1)[0].strip()
+            elif "```" in content:
+                content = content.split("```", 1)[1].split("```", 1)[0].strip()
+            if not content:
+                content = "#include <hip/hip_runtime.h>\n"
+            content = content.replace("HIPFORGE_MOCK_COMPILE_ERROR", "HIPFORGE_MOCK_COMPILE_FIXED")
+        else:
+            content = {"result": "Mock Fireworks response"}
+
+        if not isinstance(content, str):
+            import json
+            content = json.dumps(content)
+
+        prompt_tokens = sum(len(m.get("content", "").split()) for m in messages)
+        completion_tokens = len(content.split())
+        return {
+            "id": "mock-fireworks-completion",
+            "object": "chat.completion",
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
+
+def get_ai_client() -> FireworksClient | MockFireworksClient:
+    """
+    Return the configured AI client.
+    """
+    from app.config.settings import settings
+
+    env_value = os.getenv("USE_MOCK_AI")
+    use_mock_ai = settings.USE_MOCK_AI
+    if env_value is not None:
+        use_mock_ai = env_value.strip().lower() in {"1", "true", "yes", "on"}
+
+    if use_mock_ai:
+        return MockFireworksClient()
     return FireworksClient()
 
 

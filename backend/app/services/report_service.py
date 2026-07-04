@@ -255,6 +255,13 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
 
     status = "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED"
     actual_retries = getattr(context, "current_attempt", 0)
+    preflight_report = getattr(context, "preflight_report", None) or {}
+    failure_category = getattr(context, "error_category", "NONE")
+    try:
+        from app.diagnostics import recommended_next_action
+        next_action = getattr(context, "recommended_next_action", "") or recommended_next_action(failure_category, preflight_report)
+    except Exception:
+        next_action = getattr(context, "recommended_next_action", "") or "Run hipforge doctor and inspect the generated diagnostics."
 
     import time
     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")

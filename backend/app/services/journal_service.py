@@ -21,58 +21,13 @@ from app.workspace.manager import get_workspace_path
 
 logger = logging.getLogger("journal_service")
 
-def _patch_mock_redis() -> None:
-    redis_client = app.redis.client.redis_client
-    if hasattr(redis_client, "lists") or hasattr(redis_client, "db"):
-        cls = redis_client.__class__
-        if not hasattr(cls, "get"):
-            async def mock_get(self, key: str) -> Optional[str]:
-                lists_attr = getattr(self, "lists", None)
-                if lists_attr is None:
-                    lists_attr = getattr(self, "db", None)
-                if lists_attr is None:
-                    return None
-                val = lists_attr.get(key)
-                if isinstance(val, list):
-                    return None
-                return val
-            cls.get = mock_get
-
-        if not hasattr(cls, "set"):
-            async def mock_set(self, key: str, value: str) -> bool:
-                lists_attr = getattr(self, "lists", None)
-                if lists_attr is None:
-                    lists_attr = getattr(self, "db", None)
-                if lists_attr is None:
-                    lists_attr = {}
-                    setattr(self, "lists", lists_attr)
-                lists_attr[key] = value
-                return True
-            cls.set = mock_set
-
-        if not hasattr(cls, "rpush"):
-            async def mock_rpush(self, key: str, value: str) -> int:
-                lists_attr = getattr(self, "lists", None)
-                if lists_attr is None:
-                    lists_attr = getattr(self, "db", None)
-                if lists_attr is None:
-                    lists_attr = {}
-                    setattr(self, "lists", lists_attr)
-                if key not in lists_attr:
-                    lists_attr[key] = []
-                if not isinstance(lists_attr[key], list):
-                    lists_attr[key] = [lists_attr[key]]
-                lists_attr[key].append(value)
-                return len(lists_attr[key])
-            cls.rpush = mock_rpush
-
 
 async def append_journal_entry(migration_id: str, entry: Dict[str, Any]) -> None:
     """
     Appends a new journal entry to both the Redis list key
     and the migration workspace's filesystem (reports/migration_journal.json).
     """
-    _patch_mock_redis()
+
     # 1. Write to Redis List
     redis_list_key = journal_key(migration_id)
     serialized_entry = json.dumps(entry)
@@ -110,7 +65,6 @@ async def get_journal(migration_id: str) -> List[Dict[str, Any]]:
     Retrieves all journal entries for a given migration.
     Tries loading from Redis list first, falling back to workspace reports file.
     """
-    _patch_mock_redis()
     redis_list_key = journal_key(migration_id)
     try:
         raw_entries = await app.redis.client.redis_client.lrange(redis_list_key, 0, -1)

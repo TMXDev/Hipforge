@@ -163,3 +163,139 @@ def mock_external_calls(monkeypatch):
         raise RuntimeError(f"Unexpected external request: {req_url}")
 
     monkeypatch.setattr(urllib.request, "urlopen", custom_urlopen)
+
+
+import asyncio
+
+class MockRedis:
+    def __init__(self):
+        self.lists = {}
+        self.db = self.lists
+        self.pubsub_channels = {}
+
+    async def ping(self):
+        return True
+
+    async def delete(self, *keys):
+        for key in keys:
+            self.lists.pop(key, None)
+
+    async def keys(self, pattern):
+        import fnmatch
+        return [k for k in self.lists.keys() if fnmatch.fnmatch(k, pattern)]
+
+    async def lpush(self, key, value):
+        if key not in self.lists:
+            self.lists[key] = []
+        self.lists[key].insert(0, value)
+        return len(self.lists[key])
+
+    async def rpush(self, key, value) -> int:
+        if key not in self.lists:
+            self.lists[key] = []
+        if not isinstance(self.lists[key], list):
+            self.lists[key] = [self.lists[key]]
+        self.lists[key].append(value)
+        return len(self.lists[key])
+
+    async def brpop(self, key, timeout=0):
+        if key not in self.lists or not self.lists[key]:
+            if timeout > 0:
+                await asyncio.sleep(min(timeout, 0.1))
+            if key not in self.lists or not self.lists[key]:
+                return None
+        val = self.lists[key].pop()
+        return (key, val)
+
+    async def lrange(self, key, start, end):
+        if key not in self.lists:
+            return []
+        if end == -1:
+            return self.lists[key][start:]
+        return self.lists[key][start:end+1]
+
+    async def lrem(self, key, count, value):
+        if key not in self.lists:
+            return 0
+        original_len = len(self.lists[key])
+        self.lists[key] = [v for v in self.lists[key] if v != value]
+        return original_len - len(self.lists[key])
+
+    async def get(self, key: str):
+        val = self.lists.get(key)
+        if isinstance(val, list):
+            return None
+        return val
+
+    async def set(self, key: str, value: str):
+        self.lists[key] = value
+        return True
+
+    async def hset(self, key: str, mapping: dict = None, **kwargs):
+        if key not in self.lists:
+            self.lists[key] = {}
+        if not isinstance(self.lists[key], dict):
+            self.lists[key] = {}
+        if mapping:
+            self.lists[key].update(mapping)
+        if kwargs:
+            self.lists[key].update(kwargs)
+        return len(mapping) if mapping else 0
+
+    async def hgetall(self, key: str):
+        val = self.lists.get(key)
+        if isinstance(val, dict):
+            return val
+        return {}
+
+    async def hget(self, key: str, field: str):
+        val = self.lists.get(key)
+        if isinstance(val, dict):
+            return val.get(field)
+        return None
+
+
+    async def llen(self, key: str) -> int:
+        val = self.lists.get(key)
+        if isinstance(val, list):
+            return len(val)
+        return 0
+
+    async def publish(self, channel, message):
+        if channel in self.pubsub_channels:
+            count = 0
+            for queue in self.pubsub_channels[channel]:
+                await queue.put({"type": "message", "channel": channel, "data": message})
+                count += 1
+            return count
+        return 0
+
+    def pubsub(self):
+        return MockPubSub(self)
+
+class MockPubSub:
+    def __init__(self, client):
+        self.client = client
+        self.channels = []
+        self.queue = asyncio.Queue()
+
+    async def subscribe(self, channel):
+        self.channels.append(channel)
+        if channel not in self.client.pubsub_channels:
+            self.client.pubsub_channels[channel] = []
+        self.client.pubsub_channels[channel].append(self.queue)
+
+    async def get_message(self, ignore_subscribe_messages=False, timeout=0):
+        try:
+            if timeout > 0:
+                return await asyncio.wait_for(self.queue.get(), timeout=timeout)
+            return self.queue.get_nowait()
+        except (asyncio.QueueEmpty, asyncio.TimeoutError):
+            return None
+
+    async def unsubscribe(self, channel=None):
+        pass
+
+    async def aclose(self):
+        pass
+

@@ -1,4 +1,29 @@
 import os
+from pathlib import Path
+
+
+def _load_dotenv_defaults() -> None:
+    """
+    Load simple KEY=VALUE pairs from the repository .env file without
+    overriding real process environment variables.
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / ".env"
+        if not candidate.exists():
+            continue
+        for raw_line in candidate.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault(key, value)
+        break
+
+
+_load_dotenv_defaults()
 
 class Settings:
     # Redis configuration
@@ -6,6 +31,7 @@ class Settings:
 
     # Workspace settings
     WORKSPACE_PATH: str = os.getenv("WORKSPACE_PATH", "/app/workspace")
+    HOST_WORKSPACE_PATH: str = os.getenv("HOST_WORKSPACE_PATH", "")
     WORKSPACE_SIZE_LIMIT: str = os.getenv("WORKSPACE_SIZE_LIMIT", "100MB")
 
     # Migration defaults
@@ -20,7 +46,7 @@ class Settings:
     FIREWORKS_API_BASE: str = os.getenv("FIREWORKS_API_BASE", "https://api.fireworks.ai/inference/v1")
     FIREWORKS_MODEL: str = os.getenv(
         "FIREWORKS_MODEL",
-        "accounts/fireworks/models/qwen2p5-coder-32b-instruct",
+        "accounts/fireworks/models/deepseek-v4-flash",
     )
 
     # Toolchain / sandbox settings

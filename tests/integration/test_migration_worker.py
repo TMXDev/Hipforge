@@ -19,96 +19,7 @@ from app.workers.migration_worker import run_worker
 import app.workers.migration_worker
 from app.redis.keys import status_key, events_channel
 
-# MockRedis definition for local in-memory simulation when Redis is not running
-class MockRedis:
-    def __init__(self):
-        self.lists = {}
-        self.pubsub_channels = {}
-
-    async def ping(self):
-        return True
-
-    async def delete(self, *keys):
-        for key in keys:
-            self.lists.pop(key, None)
-
-    async def keys(self, pattern):
-        import fnmatch
-        return [k for k in self.lists.keys() if fnmatch.fnmatch(k, pattern)]
-
-    async def lpush(self, key, value):
-        if key not in self.lists:
-            self.lists[key] = []
-        self.lists[key].insert(0, value)
-        return len(self.lists[key])
-
-    async def brpop(self, key, timeout=0):
-        if key not in self.lists or not self.lists[key]:
-            if timeout > 0:
-                await asyncio.sleep(min(timeout, 0.1))
-            if key not in self.lists or not self.lists[key]:
-                return None
-        val = self.lists[key].pop()
-        return (key, val)
-
-    async def lrange(self, key, start, end):
-        if key not in self.lists:
-            return []
-        if end == -1:
-            return self.lists[key][start:]
-        return self.lists[key][start:end+1]
-
-    async def lrem(self, key, count, value):
-        if key not in self.lists:
-            return 0
-        original_len = len(self.lists[key])
-        self.lists[key] = [v for v in self.lists[key] if v != value]
-        return original_len - len(self.lists[key])
-
-    async def publish(self, channel, message):
-        if channel in self.pubsub_channels:
-            count = 0
-            for queue in self.pubsub_channels[channel]:
-                await queue.put({"type": "message", "channel": channel, "data": message})
-                count += 1
-            return count
-        return 0
-
-    async def set(self, key, value):
-        self.lists[key] = value
-        return True
-
-    async def get(self, key):
-        return self.lists.get(key)
-
-    def pubsub(self):
-        return MockPubSub(self)
-
-class MockPubSub:
-    def __init__(self, client):
-        self.client = client
-        self.channels = []
-        self.queue = asyncio.Queue()
-
-    async def subscribe(self, channel):
-        self.channels.append(channel)
-        if channel not in self.client.pubsub_channels:
-            self.client.pubsub_channels[channel] = []
-        self.client.pubsub_channels[channel].append(self.queue)
-
-    async def get_message(self, ignore_subscribe_messages=False, timeout=0):
-        try:
-            if timeout > 0:
-                return await asyncio.wait_for(self.queue.get(), timeout=timeout)
-            return self.queue.get_nowait()
-        except (asyncio.QueueEmpty, asyncio.TimeoutError):
-            return None
-
-    async def unsubscribe(self, channel=None):
-        pass
-
-    async def aclose(self):
-        pass
+from tests.conftest import MockRedis
 
 
 @pytest.fixture
@@ -183,7 +94,7 @@ def clean_redis_keys():
 
 
 @pytest.mark.anyio
-async def test_migration_worker_integration():
+async def test_migration_worker_integration(redis_integration_client):
     """
     Integration test for the Migration Worker:
     1. Starts worker in a background asyncio task.
@@ -277,4 +188,3 @@ async def test_migration_worker_integration():
         app.workflow_engine.states.handle_compiling = original_handle_compiling
         if "MIGRATION_WORKER_TIMEOUT" in os.environ:
             del os.environ["MIGRATION_WORKER_TIMEOUT"]
-

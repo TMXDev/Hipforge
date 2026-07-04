@@ -3,16 +3,6 @@ import asyncio
 from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine.state_machine import WorkflowEngine
 
-@pytest.fixture(autouse=True)
-def patch_mock_redis(redis_test_client):
-    """Fixture to dynamically patch MockRedis with set/get methods if they are missing."""
-    if not hasattr(redis_test_client, "set"):
-        async def mock_set(key, value):
-            redis_test_client.lists[key] = value
-        async def mock_get(key):
-            return redis_test_client.lists.get(key)
-        redis_test_client.set = mock_set
-        redis_test_client.get = mock_get
 
 def test_workflow_engine_immediate_success(redis_test_client):
     migration_id = "test-success-immediate"

@@ -89,12 +89,9 @@ export default function MigrationPage() {
   const handleMessage = useCallback((event: StreamEvent) => {
     setAllEvents((prev) => [...prev, event]);
     const stage = (event.stage ?? event.state ?? "").toUpperCase();
-    const status = (event.status ?? "").toLowerCase();
     if (
       stage === "COMPLETED" ||
-      stage === "FAILED" ||
-      status === "completed" ||
-      status === "failed"
+      stage === "FAILED"
     ) {
       markTerminal();
     }
@@ -133,6 +130,26 @@ export default function MigrationPage() {
   }, [migrationId, connectionState]);
 
   const downloadUrl = getDownloadUrl(migrationId);
+
+  const handleDownload = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) throw new Error("Download failed");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `hipforge-${migrationId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to download package:", err);
+      window.open(downloadUrl, "_blank");
+    }
+  };
 
   /* ── Status badge colour ── */
   const statusColor =
@@ -246,6 +263,7 @@ export default function MigrationPage() {
             <a
               id="dashboard-download-button"
               href={downloadUrl}
+              onClick={handleDownload}
               download={`hipforge-${migrationId}.zip`}
               aria-label="Download migration ZIP package"
               className="btn-primary shrink-0"

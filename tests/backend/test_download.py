@@ -8,14 +8,12 @@ from app.main import app as fastapi_app
 import app.redis.client
 from app.redis.keys import status_key
 from app.workspace.manager import get_workspace_path, create_workspace, teardown_workspace
-from app.services.journal_service import _patch_mock_redis
 
 client = TestClient(fastapi_app)
 
 
 @pytest.fixture()
 def mock_migration(redis_test_client):
-    _patch_mock_redis()
     migration_id = "migration_20260701_888888_downloadtest"
     create_workspace(migration_id)
     ws_path = get_workspace_path(migration_id)
@@ -50,12 +48,6 @@ async def test_download_success(mock_migration):
     assert response.headers["content-type"] == "application/zip"
     assert response.headers["content-disposition"] == f'attachment; filename="hipforge-{mock_migration}.zip"'
     assert response.content is not None
-    
-    # 2. Test fallback endpoint
-    response_fallback = client.get(f"/migrate/{mock_migration}/download")
-    assert response_fallback.status_code == 200
-    assert response_fallback.headers["content-type"] == "application/zip"
-    assert response_fallback.headers["content-disposition"] == f'attachment; filename="hipforge-{mock_migration}.zip"'
 
 
 @pytest.mark.anyio

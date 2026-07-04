@@ -45,11 +45,3 @@ async def download_migration_package(migration_id: str):
     )
 
 
-@router.get("/migrate/{migration_id}/download")
-async def download_migration_package_fallback(migration_id: str):
-    """
-    Fallback GET route matching GET /migrate/{id}/download format.
-    """
-    validate_migration_id(migration_id)
-    return await download_migration_package(migration_id)
-

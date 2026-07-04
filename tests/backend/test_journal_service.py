@@ -111,21 +111,21 @@ def test_api_get_journal_success(sample_migration, redis_test_client):
     asyncio.run(redis_test_client.set(status_key(sample_migration), "SCA"))
     asyncio.run(append_journal_entry(sample_migration, entry))
 
-    # Test both paths: v1 and conceptual fallback
-    for path in (f"/api/v1/migrate/{sample_migration}/journal", f"/migrate/{sample_migration}/journal"):
-        response = client.get(path)
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-        assert len(data) == 1
-        assert data[0]["workflow_state"] == "SCA"
+    # Test standard endpoint v1
+    path = f"/api/v1/migrate/{sample_migration}/journal"
+    response = client.get(path)
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["workflow_state"] == "SCA"
 
 
 def test_api_get_journal_404_not_found(redis_test_client):
     """GET /api/v1/migrate/{id}/journal must return 404 if migration doesn't exist."""
     invalid_id = "migration_nonexistent_12345"
     
-    for path in (f"/api/v1/migrate/{invalid_id}/journal", f"/migrate/{invalid_id}/journal"):
-        response = client.get(path)
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Migration not found"
+    path = f"/api/v1/migrate/{invalid_id}/journal"
+    response = client.get(path)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Migration not found"
