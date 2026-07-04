@@ -20,6 +20,7 @@ from pathlib import Path
 from app.workspace.manager import get_workspace_path
 from app.redis.client import redis_client
 from app.redis.keys import status_key
+from app.compiler.project_scanner import project_summary_line
 
 logger = logging.getLogger("report_service")
 
@@ -95,6 +96,13 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     if start_time_secs:
         duration_seconds = round(time.time() - start_time_secs, 2)
     
+    # project scan summary
+    project_scan = getattr(context, "project_scan", None) or {}
+    project_scan_summary = project_scan.get("message", "")
+    project_scan_category = project_scan.get("category", "")
+    project_scan_strategy = project_scan.get("compile_strategy", "")
+    scan_detail = project_summary_line(project_scan) if project_scan else ""
+
     # original files
     input_dir = workspace_path / "input"
     original_files = []
@@ -134,7 +142,14 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Readiness**: `{preflight_report.get('readiness', 'n/a')}`",
         f"- **Critical Environment Failures**: `{len(preflight_report.get('critical_failures', []))}`",
         f"",
-        f"## 3. Input Project Details",
+        f"## 3. Project Scan",
+        f"- **Classification**: `{project_scan_category or 'standard_cuda'}`",
+        f"- **Message**: {project_scan_summary}",
+        f"- **Scan Detail**: {scan_detail}",
+        f"- **Compile Strategy**: `{project_scan_strategy}`",
+        f"- **Generated Build Plan**: `{'Yes' if getattr(context, 'generated_build_plan', False) else 'No'}`",
+        f"",
+        f"## 4. Input Project Details",
         f"- **Original Files Uploaded**:"
     ]
     
@@ -144,7 +159,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 4. Translation Summary",
+        f"## 5. Translation Summary",
         f"- **hipify-clang Status**: `SUCCESS`" if getattr(context, "hipify_output_path", None) else "- **hipify-clang Status**: `FAILED` / `SKIPPED`"
     ])
 
@@ -160,7 +175,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 5. Compilation History",
+        f"## 6. Compilation History",
     ])
     if log_summaries:
         lines.extend(log_summaries)
@@ -169,7 +184,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 6. AI Usage Summary",
+        f"## 7. AI Usage Summary",
     ])
 
     ai_requests = len([entry for entry in journal if entry.get("analysis_summary") or entry.get("patch_summary") or entry.get("research_summary")])
@@ -178,7 +193,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     lines.extend([
         f"",
-        f"## 7. AI Agent Activity",
+        f"## 8. AI Agent Activity",
     ])
     
     # Summarize from Migration Journal
@@ -195,12 +210,12 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     else:
         lines.append("- No AI Agent interactions recorded.")
 
-    # 7b. Learning / Previous Knowledge Used
+    # 8b. Learning / Previous Knowledge Used
     lesson_matched = getattr(context, "lesson_matched", None)
     if lesson_matched:
         lines.extend([
             f"",
-            f"## 7b. Learning / Previous Knowledge Used",
+            f"## 8b. Learning / Previous Knowledge Used",
             f"- **Lesson Category**: `{lesson_matched.get('category', 'N/A')}`",
             f"- **Previously Recommended Action**: {lesson_matched.get('recommended_action', 'N/A')}",
             f"- **Patch Attempted Previously**: `{lesson_matched.get('patch_attempted', False)}`",
@@ -208,10 +223,10 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
             f"- **Lesson Timestamp**: `{lesson_matched.get('timestamp', 'N/A')}`",
         ])
 
-    # 8. Migration Metrics & Validation
+    # 9. Migration Metrics & Validation
     lines.extend([
         f"",
-        f"## 8. Migration Metrics & Validation",
+        f"## 9. Migration Metrics & Validation",
         f"- **CUDA APIs Detected**: `{getattr(context, 'cuda_apis_detected', 0)}`",
         f"- **CUDA APIs Automatically Converted**: `{getattr(context, 'cuda_apis_converted', 0)}`",
         f"- **Remaining CUDA APIs**: `{getattr(context, 'cuda_apis_remaining', 0)}`",
@@ -221,7 +236,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Error Category**: `{failure_category}`",
         f"- **Total Migration Duration**: `{duration_seconds}s`",
         f"",
-        f"## 9. Final Summary",
+        f"## 10. Final Summary",
         f"- **Environment Summary**: `{preflight_report.get('readiness', 'n/a')}`",
         f"- **Migration Summary**: `{status}`",
         f"- **Compile Summary**: `{'SUCCESS' if getattr(context, 'compilation_success', False) else 'FAILED or SKIPPED'}`",
@@ -302,6 +317,22 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
                 original_files.append(f.name)
                 file_hashes[f.name] = compute_file_hash(f)
 
+    # 2b. Project Scan Summary
+    project_scan_json = {}
+    project_scan = getattr(context, "project_scan", None)
+    if project_scan:
+        project_scan_json = {
+            "classification": project_scan.get("category") or "standard_cuda",
+            "message": project_scan.get("message", ""),
+            "compile_strategy": project_scan.get("compile_strategy", ""),
+            "generated_build_plan": getattr(context, "generated_build_plan", False),
+            "cu_file_count": len(project_scan.get("cu_files", [])),
+            "hip_file_count": len(project_scan.get("hip_files", [])),
+            "cpp_file_count": len(project_scan.get("cpp_files", [])),
+            "header_file_count": len(project_scan.get("header_files", [])),
+            "build_system": project_scan.get("build_system_detected", "none"),
+        }
+
     # 3. Translation Summary
     translation_summary = {
         "hipify_clang_status": "SUCCESS" if getattr(context, "hipify_output_path", None) else "FAILED",
@@ -354,6 +385,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     # Assemble complete structured report
     report_data = {
         "migration_summary": summary,
+        "project_scan": project_scan_json,
         "input_project_details": {
             "original_files": original_files,
             "file_hashes": file_hashes
@@ -381,6 +413,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "migration_journal_excerpt": journal,
         "generated_artifacts": [
             "generated/",
+            "generated/Makefile.hipforge (auto-generated build plan)",
             "patches/",
             "logs/",
             "reports/migration_report.md",

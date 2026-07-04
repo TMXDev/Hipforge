@@ -54,16 +54,39 @@ async def handle_queued(context: WorkflowContext) -> str:
 
 async def handle_preparing(context: WorkflowContext) -> str:
     import zipfile
+    from app.compiler.project_scanner import check_nested_zip, NESTED_ARCHIVE_INPUT
+
     workspace = Path(context.workspace_path)
     input_dir = workspace / "input"
     
     zip_files = list(input_dir.glob("*.zip"))
+    
+    # Check for nested ZIPs before extraction
+    if check_nested_zip(input_dir):
+        msg = "Uploaded archive appears to contain another archive instead of project files."
+        logger.error("[PREPARING] %s", msg)
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = NESTED_ARCHIVE_INPUT
+        context.failure_reason = msg
+        raise RuntimeError(msg)
+    
     for zip_path in zip_files:
         logger.info("[PREPARING] Extracting ZIP archive: %s", zip_path)
         try:
             with zipfile.ZipFile(zip_path, "r") as z:
+                for info in z.infolist():
+                    name = info.filename
+                    if ".." in name.split("/") or ".." in name.split("\\"):
+                        raise RuntimeError(f"Zip-slip detected: entry '{name}' contains path traversal.")
+                    if name.startswith("/") or name.startswith("\\"):
+                        raise RuntimeError(f"Absolute path detected in ZIP entry: '{name}'")
+                    if len(name) >= 2 and name[1] == ":":
+                        raise RuntimeError(f"Absolute Windows path detected in ZIP entry: '{name}'")
                 z.extractall(input_dir)
-            zip_path.unlink()  # Clean up the zip file
+            zip_path.unlink()
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error("[PREPARING] Failed to extract zip: %s", e)
             raise RuntimeError(f"PREPARING failed to extract zip: {e}")
@@ -73,8 +96,9 @@ async def handle_preparing(context: WorkflowContext) -> str:
 
 async def handle_preflight(context: WorkflowContext) -> str:
     """
-    Runs environment diagnostics after input preparation and before any migration
-    tool is launched. Critical failures abort before HIPIFY, COMPILING, or AI.
+    Runs environment diagnostics AND project scanning before any migration
+    tool is launched. Critical failures (env or project) abort before HIPIFY,
+    COMPILING, or AI.
     """
     from app.diagnostics import (
         preflight_failure_message,
@@ -82,8 +106,114 @@ async def handle_preflight(context: WorkflowContext) -> str:
         run_preflight,
     )
 
-    logger.info("[PREFLIGHT] Running environment validation for %s", context.migration_id)
+    logger.info("[PREFLIGHT] Running project scan and environment validation for %s", context.migration_id)
 
+    # ── Project scan (early, before arch check — project issues take priority) ──
+    from app.compiler.project_scanner import (
+        scan_project,
+        project_summary_line,
+        NO_PROJECT_FILES,
+        NON_CUDA_CPP_PROJECT,
+        HEADER_ONLY_INPUT,
+        MIXED_CUDA_HIP_PROJECT,
+    )
+
+    workspace = Path(context.workspace_path)
+    input_dir = workspace / "input"
+    scan = scan_project(input_dir)
+    context.project_scan = scan
+
+    summary = project_summary_line(scan)
+    logger.info("[PREFLIGHT] %s", summary)
+    logger.info("[PREFLIGHT] Project classification: %s category=%s", scan["message"], scan["category"] or "standard_cuda")
+    logger.info("[PREFLIGHT] Compile strategy: %s", scan["compile_strategy"])
+
+    # Fail early for project-level issues that don't need env diagnostics
+    category = scan["category"]
+    if category == NO_PROJECT_FILES:
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = NO_PROJECT_FILES
+        context.failure_reason = scan["message"]
+        context.last_compile_stderr = scan["message"]
+        context.recommended_next_action = "Upload a CUDA project folder or ZIP containing .cu, .hip, .cpp, or Makefile/CMakeLists.txt files."
+        logger.error("[PREFLIGHT] %s Summary: %s", scan["message"], summary)
+        raise RuntimeError(scan["message"])
+
+    if category == NON_CUDA_CPP_PROJECT:
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = NON_CUDA_CPP_PROJECT
+        context.failure_reason = scan["message"]
+        context.last_compile_stderr = scan["message"]
+        context.recommended_next_action = "No CUDA/HIP migration is needed for this project."
+        logger.info("[PREFLIGHT] %s Summary: %s", scan["message"], summary)
+        raise RuntimeError(scan["message"])
+
+    if category == HEADER_ONLY_INPUT:
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = HEADER_ONLY_INPUT
+        context.failure_reason = scan["message"]
+        context.last_compile_stderr = scan["message"]
+        context.recommended_next_action = "Upload a source file (.cu, .hip, .cpp) or a build system for compile validation."
+        logger.info("[PREFLIGHT] %s Summary: %s", scan["message"], summary)
+        raise RuntimeError(scan["message"])
+
+    # Mixed CUDA/HIP — log it but don't fail, handle_hipify will sort it out
+    if category == MIXED_CUDA_HIP_PROJECT:
+        logger.info("[PREFLIGHT] %s", scan["message"])
+
+    # ── Compile strategy routing ──────────────────────────────────────────
+    strategy = scan["compile_strategy"]
+
+    if strategy == "fail_preflight":
+        ep_count = scan.get("entrypoint_count", 0)
+        if ep_count > 1:
+            ctx_error = "MULTIPLE_ENTRYPOINTS"
+            msg = (
+                "Multiple possible entry points were found, but no build system was provided. "
+                "Add a Makefile/CMakeLists.txt or specify the entry point."
+            )
+            action = "Add a Makefile/CMakeLists.txt that defines the project build targets, or upload a single .cu file for direct compilation."
+        elif ep_count == 0 and scan.get("has_multiple_source_files", False):
+            ctx_error = "NO_ENTRYPOINT"
+            msg = (
+                "No executable entry point was found. "
+                "Upload a build system (Makefile/CMakeLists.txt) or specify how this library should be compiled."
+            )
+            action = "Add a Makefile or CMakeLists.txt to the project root, or upload a single .cu file for direct compilation."
+        else:
+            # Fallback for single-file strategies that became fail_preflight
+            ctx_error = "MISSING_BUILD_SYSTEM"
+            msg = "Multiple source files were found, but no build system was provided."
+            action = "Add a Makefile or CMakeLists.txt to the project root."
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = ctx_error
+        context.failure_reason = msg
+        context.last_compile_stderr = msg
+        context.recommended_next_action = action
+        logger.error("[PREFLIGHT] %s Summary: %s", msg, summary)
+        raise RuntimeError(msg)
+
+    if strategy.startswith("generated_"):
+        from app.compiler.makefile_generator import write_generated_makefile
+        target_arch = getattr(context, "target_gpu_architecture", "gfx90a")
+        makefile_path = write_generated_makefile(
+            workspace_path=workspace,
+            scan=scan,
+            target_arch=target_arch,
+            input_dir=input_dir,
+        )
+        if makefile_path:
+            context.generated_build_plan = True
+            context.generated_makefile_path = str(makefile_path)
+            logger.info("[PREFLIGHT] Generated build plan: %s", makefile_path)
+        logger.info("[PREFLIGHT] Build plan: %s", strategy)
+    # ── End project scan ─────────────────────────────────────────────────
+
+    # ── Arch validation (after project scan — less fundamental) ─────────
     try:
         from app.redis.client import redis_client
         from app.redis.keys import metadata_key
@@ -94,6 +224,19 @@ async def handle_preflight(context: WorkflowContext) -> str:
             context.target_gpu_architecture = target_arch
     except Exception as exc:
         logger.warning("[PREFLIGHT] Failed to read migration metadata: %s", exc)
+
+    import re
+    arch = getattr(context, "target_gpu_architecture", None) or "unknown"
+    if not re.match(r'^gfx\d{3,4}[a-z]?$', arch):
+        msg = f"Target architecture '{arch}' has an unsupported format. Expected a name like gfx90a, gfx908, gfx906, gfx942, gfx1100."
+        logger.error("[PREFLIGHT] %s", msg)
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = "UNSUPPORTED_FEATURE"
+        context.failure_reason = msg
+        context.last_compile_stderr = msg
+        context.recommended_next_action = "Select a supported architecture: gfx906, gfx908, gfx90a, gfx940, gfx941, gfx942, gfx1030, gfx1100"
+        raise RuntimeError(msg)
 
     force_mock_compiler = os.getenv("USE_MOCK_COMPILER", "").strip().lower() in {"1", "true", "yes", "on"}
     force_mock_ai = os.getenv("USE_MOCK_AI", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -123,6 +266,11 @@ async def handle_preflight(context: WorkflowContext) -> str:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     report_path = artifacts_dir / "preflight_report.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    # Merge project scan into saved preflight report
+    report_with_scan = dict(report)
+    report_with_scan["project_scan"] = scan
+    report_path.write_text(json.dumps(report_with_scan, indent=2), encoding="utf-8")
 
     critical_failures = report.get("critical_failures", [])
     if critical_failures:
@@ -219,6 +367,12 @@ async def handle_hipify(context: WorkflowContext) -> str:
             except Exception as build_err:
                 logger.warning("[HIPIFY] Failed to translate build script %s: %s", dest, build_err)
 
+    # ponytail: preserve existing .hip files, skip hipify on them
+    project_scan = getattr(context, "project_scan", None)
+    has_existing_hip = project_scan and project_scan.get("category") in ("EXISTING_HIP_PROJECT", "MIXED_CUDA_HIP_PROJECT")
+    hipify_source_count = 0
+    copied_hip_count = 0
+
     # Process all discovered source files recursively
     primary_output_path = None
     for src in source_files:
@@ -228,6 +382,17 @@ async def handle_hipify(context: WorkflowContext) -> str:
         # Change file extension from .cu to .hip
         if dest.suffix.lower() == ".cu":
             dest = dest.with_suffix(".hip")
+
+        # Skip hipify for existing .hip files — copy directly
+        if src.suffix.lower() == ".hip":
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(src, dest)
+            logger.info("[HIPIFY] Preserved existing HIP file (no translation): %s -> %s", src, dest)
+            copied_hip_count += 1
+            if primary_output_path is None:
+                primary_output_path = str(dest)
+            continue
             
         dest.parent.mkdir(parents=True, exist_ok=True)
         
@@ -241,8 +406,14 @@ async def handle_hipify(context: WorkflowContext) -> str:
             
         if primary_output_path is None:
             primary_output_path = result["output_path"]
+        hipify_source_count += 1
 
     context.hipify_output_path = primary_output_path
+    
+    if copied_hip_count > 0:
+        logger.info("[HIPIFY] Preserved %d existing HIP file(s) without re-translation.", copied_hip_count)
+    if hipify_source_count > 0:
+        logger.info("[HIPIFY] Translated %d CUDA source file(s).", hipify_source_count)
     
     # Save the list of generated source files to Redis and the context
     relative_source_paths = []
@@ -464,6 +635,14 @@ async def handle_compiling(context: WorkflowContext) -> str:
         if makefiles:
             hip_source = str(makefiles[0])
             break
+
+    if not hip_source:
+        makefile_hipforge = generated_dir / "Makefile.hipforge"
+        if makefile_hipforge.exists():
+            import shutil
+            shutil.copy2(makefile_hipforge, generated_dir / "Makefile")
+            hip_source = str(generated_dir / "Makefile")
+            logger.info("[COMPILING] Using generated build plan: Makefile.hipforge -> Makefile")
             
     if not hip_source:
         hip_source = context.hipify_output_path

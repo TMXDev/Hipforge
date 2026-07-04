@@ -60,31 +60,8 @@ migration_history = []
 
 # Function to validate architecture against supported targets
 def validate_target_architecture(target_arch: str) -> bool:
-    '''
-    Validates that target architecture is supported by ROCm compiler.
-    
-    Args:
-        target_arch: The architecture string to validate (e.g., 'gfx90a')
-        
-    Returns:
-        True if architecture is supported, False otherwise
-        
-    Raises:
-        ValueError: If architecture is not in supported list or not supported by compiler
-    '''
-    # Supported architectures (same as CLI interactive list)
-    supported_architectures = [
-        "gfx906", "gfx908", "gfx90a", "gfx940", "gfx941", "gfx942",
-        "gfx1030", "gfx1100"
-    ]
-    
-    # Check if architecture is in the supported list
-    if target_arch not in supported_architectures:
-        raise ValueError(
-            f"Selected architecture '{target_arch}' is not supported. "
-            f"Choose one of: {', '.join(supported_architectures)}"
-        )
-    
+    if not target_arch or not target_arch.strip():
+        raise ValueError("Target architecture cannot be empty.")
     return True
 
 def print_step(message: str):
@@ -222,7 +199,13 @@ def run_self_test_command(host_url: str, target_arch: str | None = None, remote:
     return bool(report.get("success"))
 
 def zip_project(project_path: Path) -> Path:
-    """Zips the target project path recursively into a temporary file."""
+    """Zips the target project path recursively into a temporary file.
+    If the input is already a .zip, returns it as-is (no double-zip).
+    """
+    if project_path.is_file() and project_path.suffix.lower() == ".zip":
+        print_step(f"Input is already a ZIP archive: {project_path.name}")
+        return project_path
+
     temp_zip = Path(tempfile.mktemp(suffix=".zip"))
     print_step(f"Compressing project {project_path.name}...")
     
@@ -232,7 +215,6 @@ def zip_project(project_path: Path) -> Path:
         else:
             for file_path in project_path.rglob('*'):
                 if file_path.is_file() and not any(part.startswith('.') for part in file_path.parts):
-                    # Relative path within the zip
                     rel_path = file_path.relative_to(project_path)
                     zipf.write(file_path, rel_path)
                     
@@ -241,7 +223,7 @@ def zip_project(project_path: Path) -> Path:
 
 def draw_stage_pipeline(active_stage: str):
     """Draws a beautiful progress line of the migration workflow stages."""
-    stages = ["QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING", "ANALYZING", "PATCHING", "RESEARCHING", "GENERATING_REPORT"]
+    stages = ["QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING", "ANALYZING", "PATCHING", "GENERATING_REPORT"]
     formatted = []
     
     for stage in stages:
@@ -419,13 +401,112 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
                 
         if final_status and final_status.upper() == "COMPLETED":
             download_and_extract(host_url, migration_id, output_path)
-        elif final_status and final_status.upper() == "FAILED":
-            print_fail(f"Migration pipeline failed with status: {final_status}")
+
+        detail = {}
+        journal = []
+        try:
+            status_resp = requests.get(f"{host_url}/api/v1/migrate/{migration_id}/status", timeout=5)
+            if status_resp.status_code == 200:
+                detail = status_resp.json()
+        except Exception:
+            pass
+
+        try:
+            journal_resp = requests.get(f"{host_url}/api/v1/migrate/{migration_id}/journal", timeout=5)
+            if journal_resp.status_code == 200:
+                journal = journal_resp.json()
+        except Exception:
+            pass
+
+        # Per-attempt summary from journal
+        compile_attempts = sum(1 for e in journal if e.get("workflow_state") == "COMPILING")
+        repair_cycles = sum(1 for e in journal if e.get("workflow_state") in ("ANALYZING",))
+
+        # Find failed stage (last non-terminal workflow_state)
+        failed_stage = ""
+        main_error = ""
+        for e in reversed(journal):
+            ws = e.get("workflow_state", "")
+            if ws not in ("COMPLETED", "FAILED", "GENERATING_REPORT"):
+                failed_stage = ws
+                break
+        for e in reversed(journal):
+            err = e.get("main_error") or ""
+            if err:
+                main_error = err
+                break
+
+        terminal_status = final_status or "unknown"
+
+        # Detect preflight-level failures from detail response
+        error_category = detail.get("error_category", "")
+        if not error_category:
+            for e in journal:
+                cat = e.get("error_category", "")
+                if cat and cat not in ("NONE", ""):
+                    error_category = cat
+                    break
+
+        # Detect build strategy from detail response or journal
+        build_strategy = ""
+        project_scan = detail.get("project_scan", {}) if isinstance(detail.get("project_scan"), dict) else {}
+        if project_scan:
+            build_strategy = project_scan.get("compile_strategy", "")
+        if not build_strategy:
+            for e in journal:
+                ps = e.get("project_scan")
+                if isinstance(ps, dict) and ps.get("compile_strategy"):
+                    build_strategy = ps.get("compile_strategy")
+                    break
+
+        print(f"\n{Colors.BOLD}{Colors.GOLD}====================================={Colors.ENDC}")
+        print(f"{Colors.BOLD}{Colors.GOLD}  HIPForge Migration Summary{Colors.ENDC}")
+        print(f"{Colors.BOLD}{Colors.GOLD}====================================={Colors.ENDC}")
+        print(f"  {Colors.BOLD}Job ID:{Colors.ENDC}              {migration_id}")
+        print(f"  {Colors.BOLD}Terminal Status:{Colors.ENDC}     {terminal_status}")
+        print(f"  {Colors.BOLD}Architecture:{Colors.ENDC}        {target_arch}")
+        if build_strategy:
+            print(f"  {Colors.BOLD}Build Strategy:{Colors.ENDC}     {build_strategy}")
+        print(f"  {Colors.BOLD}Repair Budget:{Colors.ENDC}       {retry_budget}")
+        print(f"  {Colors.BOLD}Compile Attempts:{Colors.ENDC}    {compile_attempts}")
+        print(f"  {Colors.BOLD}AI Repair Cycles:{Colors.ENDC}    {repair_cycles}")
+        if error_category and error_category not in ("NONE", "MIGRATION_ERROR"):
+            print(f"  {Colors.BOLD}Error Category:{Colors.ENDC}     {error_category}")
+        if failed_stage:
+            print(f"  {Colors.BOLD}Failed Stage:{Colors.ENDC}       {failed_stage}")
+        if main_error:
+            print(f"  {Colors.BOLD}Main Error:{Colors.ENDC}        {main_error[:200]}")
+
+        # Did AI repair run?
+        ai_events = [e for e in journal if e.get("workflow_state") in ("ANALYZING", "PATCHING", "RESEARCHING")]
+        if ai_events:
+            print(f"  {Colors.BOLD}AI Repair:{Colors.ENDC}         Entered ({len(ai_events)} event(s))")
+            last = ai_events[-1]
+            if last.get("analysis_summary") or last.get("patch_summary"):
+                summary = (last.get("analysis_summary") or last.get("patch_summary") or "")[:120]
+                print(f"  {Colors.BOLD}  Last Event:{Colors.ENDC}    {summary}")
         else:
-            print_warn(f"Migration pipeline finished with status: {final_status}")
-            
+            # Show why repair was skipped
+            skip_reason = detail.get("error_category") or ""
+            if not skip_reason:
+                for e in reversed(journal):
+                    cat = e.get("error_category") or ""
+                    if cat and cat != "NONE":
+                        skip_reason = cat
+                        break
+            if skip_reason:
+                print(f"  {Colors.BOLD}AI Repair:{Colors.ENDC}         Skipped ({skip_reason})")
+            else:
+                print(f"  {Colors.BOLD}AI Repair:{Colors.ENDC}         Did not enter")
+
+        report_url = f"{host_url}/api/v1/migrate/{migration_id}/download"
+        if final_status and final_status.upper() == "COMPLETED":
+            print(f"  {Colors.BOLD}Artifact:{Colors.ENDC}         {output_path.resolve()}")
+        print(f"  {Colors.BOLD}Report:{Colors.ENDC}           {report_url}")
+        print(f"{Colors.BOLD}{Colors.GOLD}====================================={Colors.ENDC}\n")
+
     finally:
-        if zip_file and zip_file.exists():
+        if zip_file and zip_file.exists() and zip_file != project_path:
             try:
                 os.remove(zip_file)
             except Exception:

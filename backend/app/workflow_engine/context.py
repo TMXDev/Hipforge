@@ -45,6 +45,8 @@ class WorkflowContext:
         self.recommended_next_action: str = ""
         self.preflight_report: Optional[Dict[str, Any]] = None
 
+        # ── Project scan (preflight classification) ─────────────────────
+        self.project_scan: Optional[Dict[str, Any]] = None
 
         # ── HIPIFY stage output ─────────────────────────────────────────
         # Absolute path to the translated .hip file written by hipify-clang.
