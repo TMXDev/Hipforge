@@ -17,25 +17,31 @@ async def download_migration_package(migration_id: str):
     Returns 404 if the migration is not complete or does not exist.
     """
     validate_migration_id(migration_id)
-    # 1. Retrieve Redis status
-    try:
-        redis_status = await app.redis.client.redis_client.get(status_key(migration_id))
-    except Exception:
-        redis_status = None
 
-    # 2. Get workspace path and verify the ZIP file
+    # 1. Get workspace path and verify the ZIP file
     try:
         workspace_path = get_workspace_path(migration_id)
         zip_path = workspace_path / "exports" / "HIPForge_Migration.zip"
     except Exception:
         raise HTTPException(status_code=404, detail="Migration workspace not found")
 
-    # 3. Validation: status must be COMPLETED or FAILED (if status key exists)
-    if redis_status and redis_status not in ("COMPLETED", "FAILED"):
-        raise HTTPException(status_code=404, detail="Migration is not complete")
-
+    # 2. Check if ZIP exists before any other validation
     if not zip_path.exists():
         raise HTTPException(status_code=404, detail="Migration package not found")
+
+    # 3. Retrieve Redis status (skip if unavailable to avoid failure when ZIP exists)
+    skip_status_validation = False
+    try:
+        redis_status = await app.redis.client.redis_client.get(status_key(migration_id))
+        if redis_status:
+            if redis_status not in ("COMPLETED", "FAILED"):
+                raise HTTPException(status_code=404, detail="Migration is not complete")
+        else:
+            skip_status_validation = True
+    except HTTPException:
+        raise
+    except Exception:
+        skip_status_validation = True
 
     # 4. Return FileResponse with correct content headers
     return FileResponse(
