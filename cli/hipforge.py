@@ -58,6 +58,35 @@ except ValueError:
     default_attempts = 5
 migration_history = []
 
+# Function to validate architecture against supported targets
+def validate_target_architecture(target_arch: str) -> bool:
+    '''
+    Validates that target architecture is supported by ROCm compiler.
+    
+    Args:
+        target_arch: The architecture string to validate (e.g., 'gfx90a')
+        
+    Returns:
+        True if architecture is supported, False otherwise
+        
+    Raises:
+        ValueError: If architecture is not in supported list or not supported by compiler
+    '''
+    # Supported architectures (same as CLI interactive list)
+    supported_architectures = [
+        "gfx906", "gfx908", "gfx90a", "gfx940", "gfx941", "gfx942",
+        "gfx1030", "gfx1100"
+    ]
+    
+    # Check if architecture is in the supported list
+    if target_arch not in supported_architectures:
+        raise ValueError(
+            f"Selected architecture '{target_arch}' is not supported. "
+            f"Choose one of: {', '.join(supported_architectures)}"
+        )
+    
+    return True
+
 def print_step(message: str):
     print(f"{Colors.BOLD}{Colors.BLUE}[+] {message}{Colors.ENDC}")
 
@@ -212,7 +241,7 @@ def zip_project(project_path: Path) -> Path:
 
 def draw_stage_pipeline(active_stage: str):
     """Draws a beautiful progress line of the migration workflow stages."""
-    stages = ["QUEUED", "PREPARING", "HIPIFY", "SCA", "COMPILING", "RESEARCHING", "PATCHING", "GENERATING_REPORT"]
+    stages = ["QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING", "ANALYZING", "PATCHING", "RESEARCHING", "GENERATING_REPORT"]
     formatted = []
     
     for stage in stages:
@@ -317,6 +346,13 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
     try:
         zip_file = zip_project(project_path)
         
+        # Validate architecture against supported targets before sending to server
+        try:
+            validate_target_architecture(target_arch)
+        except ValueError as e:
+            print_fail(str(e))
+            return
+
         upload_url = f"{host_url}/api/v1/migrate/upload"
         print_step(f"Uploading project to {upload_url}...")
         
@@ -383,8 +419,10 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
                 
         if final_status and final_status.upper() == "COMPLETED":
             download_and_extract(host_url, migration_id, output_path)
+        elif final_status and final_status.upper() == "FAILED":
+            print_fail(f"Migration pipeline failed with status: {final_status}")
         else:
-            print_fail(f"Migration pipeline finished with status: {final_status}")
+            print_warn(f"Migration pipeline finished with status: {final_status}")
             
     finally:
         if zip_file and zip_file.exists():
@@ -421,7 +459,7 @@ def show_interactive_help():
 
 def run_interactive_cli():
     global default_host, default_arch, default_attempts
-    
+
     if readline:
         commands = ["/migrate", "/cancel", "/status", "/set", "/info", "/doctor", "/self-test", "/history", "/clear", "/help", "/exit", "/quit"]
         configs = ["host", "arch", "attempts"]
