@@ -231,16 +231,26 @@ class MockRedis:
         self.lists[key] = value
         return True
 
-    async def hset(self, key: str, mapping: dict = None, **kwargs):
+    async def hset(self, key: str, *args, **kwargs):
         if key not in self.lists:
             self.lists[key] = {}
         if not isinstance(self.lists[key], dict):
             self.lists[key] = {}
-        if mapping:
+        mapping = kwargs.pop("mapping", None)
+        if mapping is not None:
             self.lists[key].update(mapping)
+            return len(mapping)
+        if args:
+            if len(args) == 2:
+                self.lists[key][args[0]] = args[1]
+                return 1
+            if len(args) == 1 and isinstance(args[0], dict):
+                self.lists[key].update(args[0])
+                return len(args[0])
         if kwargs:
             self.lists[key].update(kwargs)
-        return len(mapping) if mapping else 0
+            return len(kwargs)
+        return 0
 
     async def hgetall(self, key: str):
         val = self.lists.get(key)

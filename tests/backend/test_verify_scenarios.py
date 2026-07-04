@@ -108,7 +108,8 @@ async def test_retry_budget_2_gives_2_repairs_3_compiles(redis_test_client):
     assert analyze_count == 2, f"Expected 2 ANALYZING, got {analyze_count}"
     assert patching_count == 2, f"Expected 2 PATCHING, got {patching_count}"
     assert compiling_count == 3, f"Expected 3 COMPILING, got {compiling_count}"
-    assert visited_states[-1] == "FAILED"
+    assert visited_states[-1] == "GENERATING_REPORT", "Retry exhaustion reaches GENERATING_REPORT"
+    assert engine.context.current_state == "FAILED", "State machine transitions to FAILED after GENERATING_REPORT"
     assert engine.context.current_attempt == 2
     print(f"  PASS: retry_budget=2 -> 2 repair cycles + 3 compile attempts")
 
@@ -132,6 +133,8 @@ async def test_preflight_arch_validation(redis_test_client):
     ctx.migration_id = "mock-pf-reject"  # Override so it doesn't get stub handler
     ctx.workspace_path = tempfile.mkdtemp()
     (Path(ctx.workspace_path) / "generated").mkdir(parents=True)
+    (Path(ctx.workspace_path) / "input").mkdir(parents=True)
+    (Path(ctx.workspace_path) / "input" / "kernel.cu").write_text("// test\n", encoding="utf-8")
 
     raised = False
     try:
@@ -150,11 +153,15 @@ async def test_preflight_arch_validation(redis_test_client):
     print(f"  PASS: invalid arch rejected at preflight")
 
     # -- Part B: gfx940 passes format check --
+    os.environ["USE_MOCK_COMPILER"] = "true"
+    os.environ["USE_MOCK_AI"] = "true"
     ctx2 = WorkflowContext("test-pf-pass", "/tmp/pf-pass", retry_budget=2)
     ctx2.target_gpu_architecture = "gfx940"
     ctx2.migration_id = "mock-pf-pass2"
     ctx2.workspace_path = tempfile.mkdtemp()
     (Path(ctx2.workspace_path) / "generated").mkdir(parents=True)
+    (Path(ctx2.workspace_path) / "input").mkdir(parents=True)
+    (Path(ctx2.workspace_path) / "input" / "kernel.cu").write_text("// test\n", encoding="utf-8")
 
     try:
         await handle_preflight(ctx2)
@@ -168,13 +175,15 @@ async def test_preflight_arch_validation(redis_test_client):
 
     assert ctx2.infrastructure_error is False, f"gfx940 should NOT be rejected at format check"
     print(f"  PASS: gfx940 has valid format (backend compiler will handle actual support)")
+    del os.environ["USE_MOCK_COMPILER"]
+    del os.environ["USE_MOCK_AI"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BONUS: Verify RESEARCHING in pipeline display and transitions
 # ═══════════════════════════════════════════════════════════════════════════
-def test_researching_still_in_pipeline_display():
-    """RESEARCHING is in draw_stage_pipeline but transitions.py never returns it."""
+def test_researching_removed_from_pipeline_display():
+    """RESEARCHING was removed from the pipeline display (dead/unreachable)."""
     from cli.hipforge import draw_stage_pipeline
     import io, contextlib
 
@@ -186,10 +195,9 @@ def test_researching_still_in_pipeline_display():
     has_researching = "RESEARCHING" in output
     print(f"\n  Pipeline from draw_stage_pipeline():")
     print(f"  Contains RESEARCHING stage: {has_researching}")
-    print(f"  transitions.py line 23-25: RESEARCHING -> GENERATING_REPORT (not COMPILING)")
-    print(f"  In practice: the workflow NEVER reaches RESEARCHING because")
-    print(f"  determine_next_state() never returns 'RESEARCHING' anymore.")
-    print(f"  RESEARCHING = dead display code only")
+    assert not has_researching, "RESEARCHING should be removed from pipeline display"
+    print(f"  Stages shown: {[s.strip('[]') for s in output.split() if s.strip('[]').isupper()]}")
+    print(f"  PASS: RESEARCHING removed from pipeline display (dead code removed)")
 
 
 @pytest.mark.asyncio
@@ -222,6 +230,6 @@ async def test_researching_never_reached_in_workflow(redis_test_client):
     assert researching_count == 0, f"Workflow visited RESEARCHING {researching_count} times!"
     print(f"  PASS: RESEARCHING never reached in actual workflow")
     print(f"  States: {visited_states}")
-    print(f"  Note: RESEARCHING stage still exists in draw_stage_pipeline() display")
-    print(f"  but transitions.py has no path to reach it. It's dead display code.")
-    print(f"  If reactivated, transition goes to GENERATING_REPORT (not COMPILING)")
+    print(f"  Note: RESEARCHING was removed from draw_stage_pipeline() display;")
+    print(f"  transitions.py has no path to reach it. Handler still exists for")
+    print(f"  backward compat but maps to GENERATING_REPORT (not COMPILING)")
