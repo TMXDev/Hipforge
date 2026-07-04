@@ -84,13 +84,6 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         next_action = getattr(context, "recommended_next_action", "") or recommended_next_action(failure_category, preflight_report)
     except Exception:
         next_action = getattr(context, "recommended_next_action", "") or "Run hipforge doctor and inspect the generated diagnostics."
-    preflight_report = getattr(context, "preflight_report", None) or {}
-    failure_category = getattr(context, "error_category", "NONE")
-    try:
-        from app.diagnostics import recommended_next_action
-        next_action = getattr(context, "recommended_next_action", "") or recommended_next_action(failure_category, preflight_report)
-    except Exception:
-        next_action = getattr(context, "recommended_next_action", "") or "Run hipforge doctor and inspect the generated diagnostics."
 
     # Calculate timestamps and duration
     import time
@@ -201,6 +194,19 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
                 lines.append(f"- **Research Summary**: {entry.get('research_summary')}")
     else:
         lines.append("- No AI Agent interactions recorded.")
+
+    # 7b. Learning / Previous Knowledge Used
+    lesson_matched = getattr(context, "lesson_matched", None)
+    if lesson_matched:
+        lines.extend([
+            f"",
+            f"## 7b. Learning / Previous Knowledge Used",
+            f"- **Lesson Category**: `{lesson_matched.get('category', 'N/A')}`",
+            f"- **Previously Recommended Action**: {lesson_matched.get('recommended_action', 'N/A')}",
+            f"- **Patch Attempted Previously**: `{lesson_matched.get('patch_attempted', False)}`",
+            f"- **Patch Skipped Reason**: {lesson_matched.get('patch_skipped_reason', 'N/A')}",
+            f"- **Lesson Timestamp**: `{lesson_matched.get('timestamp', 'N/A')}`",
+        ])
 
     # 8. Migration Metrics & Validation
     lines.extend([
@@ -393,6 +399,12 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "warnings": preflight_report.get("warnings", []),
         "recommended_fixes": preflight_report.get("recommended_fixes", []),
     }
+    lesson_matched = getattr(context, "lesson_matched", None)
+    report_data["learning_summary"] = lesson_matched or {
+        "lesson_matched": False,
+        "message": "No previous knowledge was used for this migration."
+    }
+
     report_data["final_summary"] = {
         "environment_summary": preflight_report.get("readiness", "n/a"),
         "migration_summary": status,

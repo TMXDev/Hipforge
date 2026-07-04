@@ -95,3 +95,8 @@ class WorkflowContext:
         # Persisted research context (findings summary) to be fed into
         # the next ANALYZING cycle.
         self.research_context: Optional[str] = None
+
+        # ── Learning / Lesson info ───────────────────────────────────────
+        # Populated when a stored lesson matches the current error.
+        # Consumed by report generator to show "Learning / Previous Knowledge Used".
+        self.lesson_matched: Optional[dict] = None

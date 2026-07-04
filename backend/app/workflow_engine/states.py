@@ -680,6 +680,29 @@ async def handle_analyzing(context: WorkflowContext) -> str:
     classification = classify_compiler_error(stderr_val)
     context.error_category = classification
 
+    # Lesson check: have we seen this error before?
+    from app.redis.client import redis_client
+    from app.learning.lesson_storage import find_lesson, store_lesson
+
+    lesson = await find_lesson(redis_client, stderr_val)
+    if lesson:
+        cat = lesson["category"]
+        logger.info("[ANALYZING] Lesson matched: %s — skipping AI analysis", cat)
+        context.lesson_matched = lesson
+        context.infrastructure_error = True
+        context.error_category = cat
+        context.analysis_result = {
+            "confidence": 0.0,
+            "root_cause": f"Previous lesson ({cat}): {lesson.get('main_error_text', '')[:200]}",
+            "repair_plan": []
+        }
+        context.recommended_next_action = lesson.get("recommended_action", "See previous lesson.")
+        logger.info(
+            "[ANALYZING] Lesson matched: %s — AI analysis skipped. Reason: %s",
+            cat, lesson.get("patch_skipped_reason", "previous lesson found")
+        )
+        return
+
     # Safeguard 1: Stop immediately on non-code errors
     if classification not in {"USER_CODE_ERROR", "UNSUPPORTED_FEATURE", "COMPILATION_ERROR"}:
         logger.error("[ANALYZING] Non-code/toolchain error detected: %s. Stopping immediately.", classification)
@@ -689,7 +712,39 @@ async def handle_analyzing(context: WorkflowContext) -> str:
             "root_cause": f"Compilation failed due to a {classification} issue: {stderr_val}",
             "repair_plan": []
         }
+        # Store lesson so future runs skip faster
+        await store_lesson(
+            redis_client,
+            category=classification,
+            stderr=stderr_val,
+            target_architecture=getattr(context, "target_gpu_architecture", ""),
+            recommended_action=context.recommended_next_action,
+            patch_attempted=False,
+            patch_skipped_reason=f"{classification} is not a user-code error",
+        )
         raise RuntimeError(f"Compilation failed due to environment/toolchain issue: {classification}")
+
+    # Safeguard 1b: UNSUPPORTED_FEATURE with arch pattern → not patchable by AI
+    if classification == "UNSUPPORTED_FEATURE":
+        import re
+        if re.search(r'gfx\d{4}', stderr_val):
+            logger.error("[ANALYZING] Unsupported GPU architecture detected. Skipping AI patching.")
+            context.infrastructure_error = True
+            context.analysis_result = {
+                "confidence": 0.0,
+                "root_cause": f"Unsupported GPU architecture: {stderr_val[:200]}",
+                "repair_plan": []
+            }
+            await store_lesson(
+                redis_client,
+                category=classification,
+                stderr=stderr_val,
+                target_architecture=getattr(context, "target_gpu_architecture", ""),
+                recommended_action="Select a supported architecture: gfx906, gfx908, gfx90a, gfx940, gfx941, gfx942, gfx1030, gfx1100",
+                patch_attempted=False,
+                patch_skipped_reason=f"Architecture {stderr_val} is not supported by ROCm compiler",
+            )
+            raise RuntimeError(f"Unsupported GPU architecture detected: {stderr_val[:300]}")
 
     # Safeguard 2: Detect repeated errors
     def are_compiler_errors_identical(errors1, errors2) -> bool:
@@ -722,6 +777,18 @@ async def handle_analyzing(context: WorkflowContext) -> str:
             "root_cause": "Compilation failed with the exact same error twice in a row. Infinite loop prevented.",
             "repair_plan": []
         }
+        # Store lesson so future runs immediately skip
+        from app.redis.client import redis_client
+        from app.learning.lesson_storage import store_lesson
+        await store_lesson(
+            redis_client,
+            category="MIGRATION_ERROR",
+            stderr=stderr_val,
+            target_architecture=getattr(context, "target_gpu_architecture", ""),
+            recommended_action="The same error repeated after a patch attempt. Manual review required.",
+            patch_attempted=True,
+            patch_skipped_reason="Identical error persisted after patching",
+        )
         raise RuntimeError("Compilation failed with the exact same error twice in a row. Infinite loop prevented.")
 
     # Save current stderr/errors to detect repetitions in future iterations
@@ -865,6 +932,18 @@ async def handle_patching(context: WorkflowContext) -> str:
         logger.warning("[PATCHING] Patch Agent returned unchanged source code. Infinite loop prevented.")
         context.infrastructure_error = True
         context.error_category = "AI_ERROR"
+        # Store lesson so future runs skip this error
+        from app.redis.client import redis_client
+        from app.learning.lesson_storage import store_lesson
+        await store_lesson(
+            redis_client,
+            category="PATCH_NOOP",
+            stderr=context.last_compile_stderr,
+            target_architecture=getattr(context, "target_gpu_architecture", ""),
+            recommended_action="The patch agent was unable to modify the source. Manual intervention required.",
+            patch_attempted=True,
+            patch_skipped_reason="Patch Agent returned unchanged source code (no-op)",
+        )
         raise RuntimeError("Patch Agent returned unchanged source code. Infinite loop prevented.")
 
     # ── Write patched file to workspace ─────────────────────────────────

@@ -150,5 +150,13 @@ def classify_compiler_error(stderr: str) -> str:
     if "compilation failed" in stderr_lower and "error:" not in stderr_lower:
         return "COMPILATION_ERROR"
 
+    # NEW: unsupported HIP gpu architecture - environment/toolchain error, not user code
+    if re.search(r'unsupported hip gpu architecture(?:\s*:|:)\s*(\S+)', stderr_lower) or re.search(r'gfx\d{2,4}[a-z]?\b', stderr_lower):
+        return "UNSUPPORTED_FEATURE"
+        
+    # NEW: unresolved symbol - linker error, needs user intervention for single files
+    if "undefined symbol" in stderr_lower or "undefined reference" in stderr_lower:
+        return "UNRESOLVED_SYMBOL"
+
     # Default to user code errors. Only this category triggers AI repair.
     return "USER_CODE_ERROR"
