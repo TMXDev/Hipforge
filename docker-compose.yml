@@ -16,16 +16,7 @@ services:
       - hipforge-network
     environment:
       - REDIS_URL=redis://redis:6379
-    command: |
-      python -c "
-      try:
-          import uvicorn
-          from app.main import app
-          uvicorn.run('app.main:app', host='0.0.0.0', port=8000)
-      except Exception:
-          import fastapi, uvicorn
-          uvicorn.run(fastapi.FastAPI(), host='0.0.0.0', port=8000)
-      "
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   frontend:
     build:
@@ -64,20 +55,7 @@ services:
       - hipforge-network
     environment:
       - REDIS_URL=redis://redis:6379
-    command: |
-      python -c "
-      import os, sys, time
-      try:
-          if os.path.exists('app/workers/migration_worker.py') and os.path.getsize('app/workers/migration_worker.py') > 0:
-              import subprocess
-              subprocess.run([sys.executable, '-m', 'app.workers.migration_worker'], check=True)
-          else:
-              raise ValueError('Empty script')
-      except Exception:
-          print('Worker stub running...')
-          while True:
-              time.sleep(1)
-      "
+    command: python -m app.workers.migration_worker
 
 volumes:
   redis_data:

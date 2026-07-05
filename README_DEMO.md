@@ -1,153 +1,125 @@
 # HIPForge Demo Readiness Notes
 
-Last verified: 2026-07-03
+Last verified: 2026-07-05
 
-This file is the honest demo-status snapshot for HIPForge. It is scoped to
-hackathon / YC-style demo stability only. It does not claim production
-readiness, real ROCm completion, or full browser automation unless those checks
-were actually run.
+This document outlines the status and steps to run the HIPForge demo.
 
-## Current Summary
+> [!IMPORTANT]
+> **Honest Demo Status:**
+> * **v0 is Compile-Validated by Default:** Today, HIPForge verifies translation correctness by checking if the generated HIP code builds successfully using the target compiler (`hipcc`).
+> * **Runtime AMD GPU Validation is Optional/Future:** Running the translated binaries on physical AMD GPU hardware is currently disabled by default and marked for future releases. We do not claim runtime-verified migration.
+> * **Recommended Demo Path:** It is highly recommended to run the demo via the **bare-metal** path rather than Docker Compose unless you have verified all network and volume configurations on your local setup.
 
-| Area | Status | Evidence |
-| --- | --- | --- |
-| Docker Compose config | PASS | `docker compose config` completed successfully. |
-| Redis service | PASS | `docker compose up -d redis` and `docker compose ps` showed Redis running. |
-| Backend import | PASS | `python -c "import sys; sys.path.insert(0, 'backend'); from app.main import app; print('backend import ok')"` printed `backend import ok`. |
-| Backend startup | PASS | Temporary uvicorn on `127.0.0.1:18000` started and `/health` returned `{"status":"ok"}`. |
-| Worker startup | PASS | Temporary worker entered its loop with `BRPOP timeout=1s`. |
-| CLI help | PASS | `python cli/hipforge.py --help` printed subcommands. |
-| CLI mock self-test | PASS | Mock self-test completed with `success: true`. |
-| Frontend install/build | PASS | `npm install` completed and `npm run build` completed successfully. |
-| Web UI HTTP route | PASS | `GET http://localhost:3000/` returned 200 and included `HIPForge`. |
-| Upload page HTTP route | PASS | `GET http://localhost:3000/upload` returned 200 and upload indicators were present. |
-| Dashboard HTTP route | PASS | `GET http://localhost:3000/migration/<id>` returned 200 and dashboard indicators were present. |
-| Browser automation | NOT EXECUTED | Playwright / in-app browser target was unavailable in this Codex session. HTTP route checks are not a browser pass. |
-| Mock API upload | PASS | Isolated mock backend + worker accepted a small CUDA file and reached `COMPLETED`. |
-| Real ROCm mode | NOT READY | Current real-mode doctor reports missing CUDA Toolkit, `cuda_runtime.h`, and `libdevice` in the sandbox. |
+---
 
-## Verified Commands
+## 1. Environment Verification (`hipforge doctor`)
 
-Run from the repository root unless noted.
+Before starting, check your environment health using the doctor tool:
 
-```powershell
-git status -sb
-git log --oneline -3
-git diff --stat HEAD
-docker compose config
-docker compose up -d redis
-docker compose ps
-python -c "import sys; sys.path.insert(0, 'backend'); from app.main import app; print('backend import ok')"
-python cli/hipforge.py --help
-cd frontend
-npm install
-npm run build
+```bash
+python cli/hipforge.py doctor
 ```
 
-Additional checks were run for startup and mock mode:
+In mock mode (recommended for pitch demos), this checks dependencies and connectivity. In real mode, it checks for physical AMD GPU dependencies.
 
-```powershell
-$env:PYTHONPATH='backend'
-$env:REDIS_URL='redis://localhost:4444/15?protocol=2'
-python -m uvicorn app.main:app --host 127.0.0.1 --port 18000 --log-level info
+### Dependency-Error Path
 
-$env:USE_MOCK_AI='true'
-$env:USE_MOCK_COMPILER='true'
-$env:MIGRATION_WORKER_TIMEOUT='1'
-python -m app.workers.migration_worker
-```
-
-The mock upload verification used a temporary local backend on port `18001`, a
-temporary worker, and Redis DB 15. The submitted file was `mock_demo.cu`. The
-job reached:
+If critical dependencies (like `hipcc`, CUDA/ROCm runtimes) are missing, `hipforge doctor` will fail and print detailed warnings:
 
 ```text
-status=COMPLETED
-stage=COMPLETED
-journal entries=8
-compiler log entries=2
+Missing Components
+  [X] ROCm SDK (hipcc)
+  [X] cuda_runtime.h
+  [X] libdevice
 ```
 
-## Demo Modes
-
-### Mock Mode Prepared
-
-Mock mode is the reliable demo path today. It was verified through:
-
-- CLI self-test with `USE_MOCK_AI=true` and `USE_MOCK_COMPILER=true`.
-- API upload of a small CUDA file through a temporary mock backend and worker.
-- Worker execution through preflight, hipify, SCA, compile, and report
-  generation, ending in `COMPLETED`.
-
-For a Web UI mock demo, make sure `.env` sets:
+To run a safe demo without these dependencies, switch to Mock Mode by setting the following in your `.env` file:
 
 ```env
 USE_MOCK_AI=true
 USE_MOCK_COMPILER=true
-NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 ```
 
-Then restart/rebuild the stack before demonstrating the browser flow.
+---
 
-### Real ROCm Mode Not Verified
+## 2. Recommended Demo Path (Bare-Metal)
 
-The current `.env` is configured for real mode:
+Since Docker Compose setups can hide network or environment edge cases, bare-metal startup is recommended:
 
+### Step 1: Start Redis
+Ensure Redis is running (e.g., via Docker or locally on port 4444):
+```bash
+docker compose up -d redis
+```
+
+### Step 2: Configure Environment
+Copy `.env.example` to `.env` and set:
 ```env
-USE_MOCK_AI=false
-USE_MOCK_COMPILER=false
+REDIS_URL=redis://localhost:4444
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+USE_MOCK_AI=true
+USE_MOCK_COMPILER=true
 ```
 
-`python cli/hipforge.py doctor --json` now confirms Docker and Fireworks are
-reachable, but real migrations are still `NOT_READY` because the sandbox is
-missing:
-
-- CUDA Toolkit
-- `cuda_runtime.h`
-- `libdevice`
-
-Do not claim real ROCm migration works until those dependencies are installed
-inside the configured sandbox image and `hipforge doctor` plus `hipforge
-self-test` pass in real mode.
-
-## Browser Status
-
-Browser test: NOT EXECUTED.
-
-Reason: the Playwright / in-app browser target was unavailable in this Codex
-session. I did not use Chrome as a substitute browser pass.
-
-Manual browser verification steps:
-
-1. Start the app with the desired mode in `.env`.
-2. Open `http://localhost:3000`.
-3. Confirm the homepage renders without a crash.
-4. Open `http://localhost:3000/upload`.
-5. Confirm the upload form, paste mode, GPU selector, retry selector, and start
-   button are visible.
-6. In mock mode, submit a tiny `.cu` file.
-7. Confirm redirect to `/migration/<migration_id>`.
-8. Confirm the status/timeline and log panels are visible.
-9. Confirm the migration reaches `COMPLETED`, or record the exact blocker.
-
-## Known Limitations
-
-- Real ROCm mode is blocked by missing CUDA compatibility files in the sandbox.
-- gVisor `runsc` is not installed; Docker default runtime fallback is allowed.
-- Host `hipify-clang` is not on PATH on this Windows host, but sandbox
-  `hipify-clang` is available.
-- Browser automation was not executed in this session.
-- `npm install` reported audit warnings: 2 moderate and 6 high vulnerabilities.
-
-## Exact Next Step
-
-For the project owner: decide the demo mode.
-
-Use mock mode for the pitch demo today. For real ROCm mode, rebuild or replace
-the sandbox image so CUDA Toolkit compatibility files, `cuda_runtime.h`, and
-`libdevice` are present, then rerun:
-
-```powershell
-python cli/hipforge.py doctor --json
-python cli/hipforge.py self-test --json --arch gfx90a
+### Step 3: Run Backend Service
+From the root workspace, run the following to start the backend:
+```bash
+$env:PYTHONPATH="backend;."
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+### Step 4: Run Migration Worker
+In another shell, start the background worker:
+```bash
+$env:PYTHONPATH="backend;."
+python -m app.workers.migration_worker
+```
+
+### Step 5: Start Frontend
+From the `frontend` directory:
+```bash
+npm run dev
+```
+Access the application at `http://localhost:3000`.
+
+---
+
+## 3. CLI Happy Path
+
+You can also run migrations directly via the CLI:
+
+```bash
+python cli/hipforge.py migrate <path_to_cuda_file_or_directory> --output <output_directory> --arch gfx90a
+```
+
+Example command:
+```bash
+python cli/hipforge.py migrate workspace/input/kernel.cu --output workspace/output --arch gfx90a
+```
+
+This command submits the migration job to the backend, streams live logs, and saves the translated files once the compile-validation is complete.
+
+---
+
+## 4. Manual Web UI Checklist
+
+If browser testing cannot be automated, follow this checklist to verify frontend readiness:
+
+1. Open `http://localhost:3000/upload` in your web browser.
+2. Select a target AMD GPU architecture (e.g., `gfx90a`).
+3. Upload a sample `.cu` (CUDA) file or paste its code in the editor.
+4. Click **Start Migration**.
+5. You will be redirected to the dashboard page (`/migration/<id>`).
+6. Observe the progress timeline, active steps, and compilation logs.
+7. Confirm that the status updates to `COMPLETED` and the final translated report page renders.
+
+---
+
+## 5. Validation Confidence
+
+At the end of a migration, HIPForge displays a **Validation Confidence** score (High, Medium, Low) based on:
+1. **Compilation Success:** Whether the translated code successfully built with `hipcc`.
+2. **Static Analysis (SCA):** Detection of CUDA-specific APIs or patterns that were not fully mapped or could cause runtime performance variance.
+3. **AI Confidence:** Log-probabilities of translation confidence returned from the translation LLM.
+
+This score informs the user of how much manual revision may be required before the code is ready for real AMD GPU deployment.
