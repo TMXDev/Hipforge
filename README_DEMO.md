@@ -8,6 +8,7 @@ This document outlines the status and steps to run the HIPForge demo.
 > **Honest Demo Status:**
 > * **v0 is Compile-Validated by Default:** Today, HIPForge verifies translation correctness by checking if the generated HIP code builds successfully using the target compiler (`hipcc`).
 > * **Runtime AMD GPU Validation is Optional/Future:** Running the translated binaries on physical AMD GPU hardware is currently disabled by default and marked for future releases. We do not claim runtime-verified migration.
+> * **Dependencies**: See the detailed [DEPENDENCIES.md](file:///C:/Users/Yassi/Downloads/HIPForge/docs/DEPENDENCIES.md) for environment configuration and pre-flight commands.
 > * **Recommended Demo Path:** It is highly recommended to run the demo via the **bare-metal** path rather than Docker Compose unless you have verified all network and volume configurations on your local setup.
 
 ---

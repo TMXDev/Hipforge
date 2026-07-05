@@ -4,6 +4,10 @@ HIPForge is a self-healing, AI-orchestrated migration assistant built to automat
 
 With a FastAPI backend, a Next.js frontend, a Redis queue/PubSub system, and specialized Fireworks AI agents, HIPForge automates the "last 30%" of migration debugging that standard compile-time translation tools (`hipify-clang`) leave behind.
 
+> [!IMPORTANT]
+> **Dependencies**: See [DEPENDENCIES.md](file:///C:/Users/Yassi/Downloads/HIPForge/docs/DEPENDENCIES.md) for full installation and environment requirements.
+> By default, `v0` supports compile-validated migration. AMD GPU runtime validation is optional/future and disabled by default.
+
 ---
 
 ## 🏗️ System Architecture
@@ -75,6 +79,42 @@ $$\text{QUEUED} \rightarrow \text{PREPARING} \rightarrow \text{PREFLIGHT} \right
 
 ---
 
+## 💡 Architecture & Compilation Engine (v0)
+
+### Thin Client Backend Integration
+HIPForge integrates CLI, Web/API upload, and paste-code interfaces as thin clients that dispatch jobs to the same centralized backend workflow engine, guaranteeing consistent translation, compilation, and self-healing behaviors regardless of input method.
+
+### Direct Redis Architecture
+Following a safe cleanup, the system uses direct asynchronous communication with `redis_client` (defined in `app.redis.client`) rather than intermediate wrapper modules, reducing overhead and improving lifecycle performance.
+
+### Build System & Makefile Logic
+- **Makefile Fallback**: If no build system is detected in the uploaded files, HIPForge automatically generates a fallback Makefile located at `workspace/generated/Makefile.hipforge`.
+- **User Makefiles Protection**: Any user-uploaded Makefile or build configuration is strictly preserved and never overwritten.
+- **Multi-File Entrypoint Support**: When no build system exists but multiple files are uploaded, HIPForge detects a valid entrypoint (like a `main` function) to compile the collection together.
+
+### v0 Validation Confidence Levels
+By default, AMD GPU runtime validation is disabled (`compile-validated`). Validation confidence levels are computed as follows:
+*   **LOW**: `hipify-clang` translation completed, but the `hipcc` compilation failed.
+*   **MEDIUM**: Translation and `hipcc` compilation passed successfully, but AMD GPU runtime execution was not performed.
+*   **HIGH**: Compilation passed, and runtime validation succeeded on AMD GPU hardware (optional/future).
+*   **PROFILED**: Runtime validation passed, and compute efficiency profiling data (`rocprof`) was collected.
+
+### Complete Engineering Reports
+Migration reports generated under `workspace/.../reports/` include:
+*   **Project Inventory**: Scanned sources and dependency detection.
+*   **Build-System Decision**: The chosen compilation strategy.
+*   **Compile Command**: The exact command executed by the compiler sandbox.
+*   **Validation Confidence**: LOW / MEDIUM / HIGH / PROFILED classification.
+*   **Main Error**: Filtered fatal error message from the compiler (prioritized over minor warnings).
+*   **Failed Stage**: The pipeline stage where failure occurred (if any).
+*   **Recommended Next Action**: Actionable step for the user.
+*   **Skipped AI Repair Reason**: Description of why AI repair was skipped.
+
+### Dependency Hardening & AI Repair Policies
+If compilation fails due to missing symbols, headers, libraries, or linker errors, it is classified as a `DEPENDENCY_ERROR`. To prevent wasting tokens, the Workflow Engine immediately skips the AI self-healing loop and reports a clear recommended action (e.g. uploading missing files or configuring dependencies).
+
+---
+
 ## ⚙️ Configuration & Environment
 
 The application configuration is managed via a `.env` file at the project root.
@@ -100,26 +140,9 @@ The application configuration is managed via a `.env` file at the project root.
 
 ---
 
-## Required Dependencies
+## 🛠️ Required & Optional Dependencies
 
-Production migrations with `USE_MOCK_COMPILER=false` require:
-
-*   Docker Engine or Docker Desktop with a running daemon.
-*   Python Docker SDK connectivity from the backend/worker environment.
-*   The configured sandbox image (`HIPFORGE_SANDBOX_IMAGE`) present locally or pullable.
-*   `hipify-clang` available either on the host when `REQUIRE_HOST_HIPIFY=true` or inside the sandbox image.
-*   `hipcc` and ROCm include directories inside the sandbox image.
-*   CUDA toolkit compatibility files needed by HIPIFY, including `cuda_runtime.h` and `libdevice`.
-*   Writable `WORKSPACE_PATH`, output, temporary workspace, and compiler cache directories.
-*   Enough disk space for uploads, generated files, logs, reports, and exports.
-*   A valid `FIREWORKS_API_KEY` and reachable Fireworks model when `USE_MOCK_AI=false`.
-
-## Optional Dependencies
-
-*   gVisor `runsc` for stronger sandbox isolation. If missing and `ALLOW_RUNSC_FALLBACK=true`, HIPForge reports a warning and uses Docker's default runtime.
-*   CMake, required only when the uploaded project contains `CMakeLists.txt`.
-*   Ninja, required only when `REQUIRE_NINJA=true` or the uploaded project contains `build.ninja`.
-*   Host `hipify-clang`, useful for faster host-side translation but not required unless `REQUIRE_HOST_HIPIFY=true`.
+For a complete and detailed breakdown of requirements for mock mode, compile-validated mode, AMD GPU runtime execution, and environment variables, please refer to the dedicated [DEPENDENCIES.md](file:///C:/Users/Yassi/Downloads/HIPForge/docs/DEPENDENCIES.md) guide.
 
 ---
 
@@ -293,14 +316,69 @@ A comprehensive unit and integration test suite is located in the `tests/` direc
 > [!IMPORTANT]
 > Always restrict `pytest` to the `tests/` directory to prevent it from collecting manual demo scripts like `scripts/test_demo.py` as test suites.
 
-To execute the test suite:
+To execute unit and mock-based integration tests:
 ```bash
-# Ensure PYTHONPATH points to backend
-$env:PYTHONPATH="backend"
+# Ensure PYTHONPATH points to backend and root
+$env:PYTHONPATH="backend;."
 
 # Run tests
-.venv\Scripts\pytest tests/ -v
+python -m pytest tests/ -v
 ```
+
+### Real End-to-End Smoke Tests
+HIPForge includes a dedicated suite of real end-to-end tests that use actual `hipify-clang`, `hipcc`, and a live Redis server. To execute these tests:
+```bash
+# Ensure PYTHONPATH points to backend and root
+$env:PYTHONPATH="backend;."
+
+# Run real E2E smoke tests
+python -m pytest -m e2e_real -s -vv
+```
+*Note: These tests verify true integration and will dynamically skip if a live Redis instance or ROCm compiler binaries are not reachable, preventing false failures in offline mock environments.*
+
+---
+
+## ⚡ Quick Demo Walkthrough
+
+Follow these steps to run a complete end-to-end migration simulation:
+
+### 1. Start Services
+Make sure Redis is running, and start the FastAPI backend and Migration Worker:
+```bash
+# Start backend API (Terminal 1)
+$env:PYTHONPATH="backend;."
+python -m uvicorn app.main:app --reload
+
+# Start worker (Terminal 2)
+$env:PYTHONPATH="backend;."
+python -m app.workers.migration_worker
+```
+
+### 2. Run CLI Migration Demo
+Use the included CLI test script to simulate a complete E2E workflow:
+```bash
+python scripts/test_demo.py
+```
+This runs a simulated migration showing:
+*   **Live Stage Logs**: Real-time logging of transitions (`QUEUED -> PREFLIGHT -> HIPIFY -> SCA -> COMPILING -> COMPLETED`).
+*   **Report Output**: Verification of generated reports.
+
+### 3. Run Web / API Upload or Paste-Code
+You can post a CUDA code string directly to the backend API endpoint to initiate a migration:
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/migrate/paste" -Method Post -ContentType "application/json" -Body '{"code": "__global__ void kernel() {}", "filename": "kernel.cu", "target_gpu_architecture": "gfx90a", "retry_budget": 3, "migration_mode": "standard"}'
+```
+This thin client endpoint places the job into the shared Redis queue, where the backend worker processes it.
+
+### 4. Run Dependency-Error Simulation
+To see the self-healing workflow skip AI repair on linker/missing dependency errors:
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/migrate/paste" -Method Post -ContentType "application/json" -Body '{"code": "__global__ void kernel() { HIPFORGE_MOCK_COMPILE_ERROR; }", "filename": "kernel.cu", "target_gpu_architecture": "gfx90a", "retry_budget": 3, "migration_mode": "standard"}'
+```
+The compiler returns a dependency error, which classifies the failure as `DEPENDENCY_ERROR` and halts immediate repair, producing a report with clear recommended steps.
+
+### 5. Understanding Validation Confidence
+In v0, AMD GPU execution validation is disabled by default, meaning successful compilations achieve a **MEDIUM** validation confidence (compile-validated). Higher confidence (**HIGH** and **PROFILED**) requires a physical AMD GPU to run the validation check or profile.
 
 ---
 
