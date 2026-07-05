@@ -312,6 +312,16 @@ class TestReportFields:
         assert "main.hip" in mm["source_files_compiled"]
         assert "gelu.hip" in mm["source_files_compiled"]
 
+        # validation_confidence section
+        vc = data["validation_confidence"]
+        assert vc["validation_confidence"] == "LOW"
+        assert vc["validation_confidence_reason"] == "hipify completed but compilation failed"
+        assert vc["compile_validation_status"] == "FAILED"
+        assert vc["runtime_validation_enabled"] is False
+        assert vc["runtime_validation_status"] == "NOT_CONFIGURED"
+        assert "runtime_validation_reason" in vc
+        assert vc["profiling_status"] == "NOT_CONFIGURED"
+
     @pytest.mark.asyncio
     async def test_markdown_report_contains_inventory_fields(self, tmp_path, monkeypatch):
         from app.services.report_service import generate_markdown_report
@@ -363,3 +373,10 @@ class TestReportFields:
         assert "single_file" in md
         assert "Generated Makefile Fallback" in md
         assert "hipcc main.hip -o output" in md
+
+        # validation confidence fields
+        assert "Validation Confidence" in md
+        assert "Runtime Validation Enabled" in md
+        assert "Runtime Validation Status" in md
+        assert "NOT_CONFIGURED" in md
+        assert "Profiling Status" in md
