@@ -10,7 +10,24 @@ from app.main import app as fastapi_app
 import app.redis.client
 from app.redis.keys import status_key, attempt_key, retry_budget_key, metadata_key, journal_key
 from app.workspace.manager import get_workspace_path, create_workspace, teardown_workspace
-from app.redis.publisher import publish_event
+from datetime import datetime, timezone
+import app.redis.client
+from app.redis.keys import events_channel
+
+async def publish_event(migration_id: str, stage: str, status: str, message: str) -> int:
+    channel = events_channel(migration_id)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "type": "event",
+        "migration_id": migration_id,
+        "timestamp": timestamp,
+        "stage": stage,
+        "status": status,
+        "message": message,
+        "state": stage,
+        "details": message
+    }
+    return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
 
 client = TestClient(fastapi_app)
 

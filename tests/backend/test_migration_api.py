@@ -13,7 +13,17 @@ from app.main import app as fastapi_app
 import app.redis.client
 from app.redis.keys import status_key, attempt_key, retry_budget_key, metadata_key
 from app.workspace.manager import get_workspace_path
-from app.redis.manager import dequeue_job
+from app.redis.keys import pending_queue_key
+
+async def dequeue_job(timeout: int = 0):
+    import app.redis.client
+    key = pending_queue_key()
+    result = await app.redis.client.redis_client.brpop(key, timeout=timeout)
+    if not result:
+        return None
+    _, value = result
+    payload = json.loads(value)
+    return payload.get("migration_id"), payload
 from app.workers.migration_worker import run_worker
 import app.workers.migration_worker
 

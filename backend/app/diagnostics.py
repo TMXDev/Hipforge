@@ -293,12 +293,7 @@ def _cache_integrity(cache_dir: Path) -> Tuple[bool, str, Dict[str, Any]]:
 
 
 def _status_icon(status: str) -> str:
-    return {
-        PASS: "OK",
-        WARN: "WARN",
-        FAIL: "FAIL",
-        SKIP: "SKIP",
-    }.get(status, status.upper())
+    return {PASS: "OK", WARN: "WARN", FAIL: "FAIL", SKIP: "SKIP"}.get(status, status.upper())
 
 
 def summarize_report(checks: List[DiagnosticCheck]) -> Dict[str, Any]:

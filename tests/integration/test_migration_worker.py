@@ -136,8 +136,9 @@ async def test_migration_worker_integration(redis_integration_client):
         await pubsub.subscribe(events_channel(migration_id))
         
         # Push the job into Redis pending queue
-        from app.redis.manager import enqueue_job
-        await enqueue_job(migration_id, payload)
+        from app.redis.keys import pending_queue_key
+        import json
+        await redis_client.lpush(pending_queue_key(), json.dumps({"migration_id": migration_id, **payload}))
         
         # Wait for the job status to transition to COMPLETED (with timeout)
         timeout = 5.0

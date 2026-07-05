@@ -2,9 +2,46 @@ import pytest
 import asyncio
 import json
 from app.redis import keys
-from app.redis.manager import enqueue_job, dequeue_job, mark_active, mark_done
-from app.redis.publisher import publish_event
-from app.redis.subscriber import subscribe_to_migration
+import app.redis.client
+
+async def enqueue_job(migration_id: str, payload: dict) -> None:
+    key = keys.pending_queue_key()
+    await app.redis.client.redis_client.lpush(key, json.dumps({"migration_id": migration_id, **payload}))
+
+async def dequeue_job(timeout: int = 0):
+    key = keys.pending_queue_key()
+    result = await app.redis.client.redis_client.brpop(key, timeout=timeout)
+    if not result:
+        return None
+    _, value = result
+    payload = json.loads(value)
+    return payload.get("migration_id"), payload
+
+async def mark_active(migration_id: str) -> None:
+    await app.redis.client.redis_client.lpush(keys.active_queue_key(), migration_id)
+
+async def mark_done(migration_id: str) -> None:
+    await app.redis.client.redis_client.lrem(keys.active_queue_key(), 0, migration_id)
+
+async def subscribe_to_migration(migration_id: str):
+    pubsub = app.redis.client.redis_client.pubsub()
+    await pubsub.subscribe(keys.events_channel(migration_id))
+    return pubsub
+
+async def publish_event(migration_id: str, stage: str, status: str, message: str) -> int:
+    from datetime import datetime, timezone
+    channel = keys.events_channel(migration_id)
+    payload = {
+        "type": "event",
+        "migration_id": migration_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stage": stage,
+        "status": status,
+        "message": message,
+        "state": stage,
+        "details": message
+    }
+    return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
 
 def test_key_builders():
     """

@@ -1,7 +1,25 @@
 from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine import states
 from app.workflow_engine.transitions import determine_next_state
-from app.redis.publisher import publish_event
+from datetime import datetime, timezone
+import json
+import app.redis.client
+from app.redis.keys import events_channel
+
+async def publish_event(migration_id: str, stage: str, status: str, message: str) -> int:
+    channel = events_channel(migration_id)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "type": "event",
+        "migration_id": migration_id,
+        "timestamp": timestamp,
+        "stage": stage,
+        "status": status,
+        "message": message,
+        "state": stage,
+        "details": message
+    }
+    return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
 import logging
 
 logger = logging.getLogger("workflow_engine")

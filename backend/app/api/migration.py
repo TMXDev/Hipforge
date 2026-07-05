@@ -94,8 +94,9 @@ async def paste_code(request: PasteMigrationRequest):
 async def cancel_migration(migration_id: str):
     validate_migration_id(migration_id)
     from app.redis.client import redis_client
-    from app.redis.keys import status_key
-    from app.redis.publisher import publish_event
+    from app.redis.keys import status_key, events_channel
+    from datetime import datetime, timezone
+    import json
     
     # Set status to FAILED in Redis
     await redis_client.set(status_key(migration_id), "FAILED")
@@ -103,12 +104,19 @@ async def cancel_migration(migration_id: str):
     await redis_client.set(f"migration:{migration_id}:cancelled", "true")
     
     # Publish cancellation event
-    await publish_event(
-        migration_id=migration_id,
-        stage="FAILED",
-        status="failed",
-        message="Migration cancelled by user."
-    )
+    channel = events_channel(migration_id)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    event_payload = {
+        "type": "event",
+        "migration_id": migration_id,
+        "timestamp": timestamp,
+        "stage": "FAILED",
+        "status": "failed",
+        "message": "Migration cancelled by user.",
+        "state": "FAILED",
+        "details": "Migration cancelled by user."
+    }
+    await redis_client.publish(channel, json.dumps(event_payload))
     return {"message": "Migration cancellation request accepted."}
 
 

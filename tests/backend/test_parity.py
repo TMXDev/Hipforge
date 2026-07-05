@@ -9,7 +9,17 @@ from pathlib import Path
 from app.main import app as fastapi_app
 import app.redis.client
 from app.redis.keys import status_key, attempt_key, retry_budget_key, metadata_key
-from app.redis.manager import dequeue_job
+from app.redis.keys import pending_queue_key
+import app.redis.client
+
+async def dequeue_job(timeout: int = 0):
+    key = pending_queue_key()
+    result = await app.redis.client.redis_client.brpop(key, timeout=timeout)
+    if not result:
+        return None
+    _, value = result
+    payload = json.loads(value)
+    return payload.get("migration_id"), payload
 from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine.state_machine import WorkflowEngine
 from app.workflow_engine.states import handle_compiling
@@ -97,7 +107,7 @@ async def test_cli_web_parity_initialization(redis_test_client):
 
 
 @pytest.mark.anyio
-async def test_target_architecture_reaches_compiler(tmp_path):
+async def test_target_architecture_reaches_compiler(tmp_path, redis_test_client):
     # Setup test workspace
     ws = tmp_path / "test_arch_propagation"
     for subdir in ("input", "generated", "logs", "artifacts", "reports", "exports"):

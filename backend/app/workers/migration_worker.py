@@ -4,7 +4,9 @@ import signal
 import asyncio
 import logging
 from app.config.settings import settings
-from app.redis.manager import dequeue_job, mark_active, mark_done
+import app.redis.client
+from app.redis.keys import pending_queue_key, active_queue_key
+import json
 from app.workflow_engine.state_machine import WorkflowEngine
 from app.workflow_engine.context import WorkflowContext
 
@@ -45,15 +47,17 @@ async def run_worker():
     while running:
         try:
             # Step 1: Dequeue a job from the pending queue (blocks until job or timeout)
-            job = await dequeue_job(timeout=brpop_timeout)
-            if job is None:
+            result = await app.redis.client.redis_client.brpop(pending_queue_key(), timeout=brpop_timeout)
+            if result is None:
                 continue
                 
-            migration_id, payload = job
+            _, value = result
+            payload = json.loads(value)
+            migration_id = payload.get("migration_id")
             logger.info(f"Dequeued migration job: {migration_id}")
             
             # Step 2: Mark the job as active
-            await mark_active(migration_id)
+            await app.redis.client.redis_client.lpush(active_queue_key(), migration_id)
             
             # Step 3: Execute the workflow engine
             try:
@@ -65,10 +69,9 @@ async def run_worker():
                     workspace_path=workspace_path,
                     retry_budget=retry_budget
                 )
-                from app.redis.client import redis_client
                 from app.redis.keys import metadata_key
                 try:
-                    metadata = await redis_client.hgetall(metadata_key(migration_id))
+                    metadata = await app.redis.client.redis_client.hgetall(metadata_key(migration_id))
                     target_arch = metadata.get("target_architecture") if isinstance(metadata, dict) else None
                     if target_arch:
                         context.target_gpu_architecture = target_arch
@@ -86,24 +89,30 @@ async def run_worker():
                 logger.exception(f"Unhandled exception during Workflow Engine execution for job {migration_id}: {e}")
                 
                 # In case of workflow engine failure, update status to FAILED and broadcast transition
-                from app.redis.client import redis_client
                 from app.redis.keys import status_key
-                from app.redis.publisher import publish_event
+                from app.redis.keys import events_channel
+                from datetime import datetime, timezone
                 try:
-                    await redis_client.set(status_key(migration_id), "FAILED")
-                    await publish_event(
-                        migration_id=migration_id,
-                        stage="WORKER",
-                        status="failed",
-                        message=f"Job aborted due to unhandled worker error: {str(e)}"
-                    )
+                    await app.redis.client.redis_client.set(status_key(migration_id), "FAILED")
+                    timestamp = datetime.now(timezone.utc).isoformat()
+                    event_payload = {
+                        "type": "event",
+                        "migration_id": migration_id,
+                        "timestamp": timestamp,
+                        "stage": "WORKER",
+                        "status": "failed",
+                        "message": f"Job aborted due to unhandled worker error: {str(e)}",
+                        "state": "WORKER",
+                        "details": f"Job aborted due to unhandled worker error: {str(e)}"
+                    }
+                    await app.redis.client.redis_client.publish(events_channel(migration_id), json.dumps(event_payload))
                 except Exception as redis_err:
                     logger.error(f"Failed to report worker crash to Redis for job {migration_id}: {redis_err}")
                     
             finally:
                 # Step 4: Ensure mark_done always runs to clean up the active job list
                 logger.info(f"Cleaning up active job status for: {migration_id}")
-                await mark_done(migration_id)
+                await app.redis.client.redis_client.lrem(active_queue_key(), 0, migration_id)
                 
         except asyncio.CancelledError:
             logger.info("Worker task has been cancelled.")

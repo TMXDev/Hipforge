@@ -8,7 +8,8 @@ from typing import Dict, Any
 from app.workspace.manager import create_workspace, write_source_file
 import app.redis.client
 from app.redis.keys import status_key, attempt_key, retry_budget_key, metadata_key
-from app.redis.manager import enqueue_job
+from app.redis.keys import pending_queue_key
+import json
 
 logger = logging.getLogger("migration_service")
 
@@ -88,7 +89,10 @@ async def initiate_migration(
     }
     if test_mode:
         payload["test_mode"] = True
-    await enqueue_job(migration_id, payload)
+    await app.redis.client.redis_client.lpush(
+        pending_queue_key(),
+        json.dumps({"migration_id": migration_id, **payload})
+    )
     
     logger.info(f"Migration {migration_id} successfully queued.")
     return migration_id
