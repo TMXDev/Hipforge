@@ -65,6 +65,15 @@ async def run_worker():
                     workspace_path=workspace_path,
                     retry_budget=retry_budget
                 )
+                from app.redis.client import redis_client
+                from app.redis.keys import metadata_key
+                try:
+                    metadata = await redis_client.hgetall(metadata_key(migration_id))
+                    target_arch = metadata.get("target_architecture") if isinstance(metadata, dict) else None
+                    if target_arch:
+                        context.target_gpu_architecture = target_arch
+                except Exception as exc:
+                    logger.warning(f"Failed to read migration metadata in worker: {exc}")
                 if payload.get("test_mode"):
                     context.compilation_success = True
                 engine = WorkflowEngine(context)

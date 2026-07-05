@@ -129,11 +129,22 @@ async def write_state_journal_entry(context: Any) -> None:
     if context.last_compile_stderr:
         compiler_error_hash = hashlib.sha256(context.last_compile_stderr.encode("utf-8")).hexdigest()
 
+    main_error = None
+    if context.current_state == "COMPILING" and not context.compilation_success:
+        from app.compiler.error_parser import extract_main_error
+        main_error = extract_main_error(context.last_compile_stderr)
+    elif context.failure_reason:
+        main_error = context.failure_reason[:500]
+
+    error_category = getattr(context, "error_category", "NONE")
+
     entry = {
         "attempt": attempt,
         "timestamp": timestamp,
         "workflow_state": context.current_state,
         "compiler_result": compiler_result,
+        "main_error": main_error,
+        "error_category": error_category,
         "analysis_summary": analysis_summary,
         "patch_summary": patch_summary,
         "research_summary": research_summary,

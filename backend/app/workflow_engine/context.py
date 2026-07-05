@@ -21,6 +21,9 @@ class WorkflowContext:
         self.workspace_path = workspace_path
         self.redis_manager = redis_manager
         self.retry_budget = retry_budget
+        self.workflow_trace = []
+        self.failed_stage = None
+        self.main_error = None
 
         # ── Core lifecycle fields ───────────────────────────────────────
         self.current_state: str = "QUEUED"
@@ -47,6 +50,8 @@ class WorkflowContext:
 
         # ── Project scan (preflight classification) ─────────────────────
         self.project_scan: Optional[Dict[str, Any]] = None
+        # Structured inventory extracted from project_scan for reporting
+        self.project_inventory: Optional[Dict[str, Any]] = None
 
         # ── HIPIFY stage output ─────────────────────────────────────────
         # Absolute path to the translated .hip file written by hipify-clang.
@@ -70,6 +75,9 @@ class WorkflowContext:
         # Raw stderr string from the most recent hipcc run.
         # Preserved for AI agents that need full diagnostic context.
         self.last_compile_stderr: str = ""
+
+        # Exact compile command from the most recent hipcc/make invocation.
+        self.last_compile_command: str = ""
 
         # ── ANALYZING stage output ──────────────────────────────────────
         # Structured result from the Analysis Agent.
@@ -102,3 +110,16 @@ class WorkflowContext:
         # Populated when a stored lesson matches the current error.
         # Consumed by report generator to show "Learning / Previous Knowledge Used".
         self.lesson_matched: Optional[dict] = None
+
+        # ── Validation confidence ────────────────────────────────────────
+        # Set after COMPILING completes. See compiler/validation_confidence.py.
+        # LOW | MEDIUM | HIGH | PROFILED
+        self.validation_confidence: str = "LOW"
+        self.validation_confidence_reason: str = "hipify completed but compilation failed"
+        # NOT_CONFIGURED | SKIPPED | PASSED | FAILED
+        self.runtime_validation_status: str = "NOT_CONFIGURED"
+        self.runtime_validation_reason: str = ""
+        # Mirrors RUNTIME_VALIDATION_ENABLED env flag; default False for v0.
+        self.runtime_validation_enabled: bool = False
+        # NOT_CONFIGURED | SKIPPED | PASSED | FAILED
+        self.profiling_status: str = "NOT_CONFIGURED"

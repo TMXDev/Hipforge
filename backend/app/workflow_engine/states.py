@@ -44,6 +44,44 @@ def write_cached_patch(unpatched_content: str, patched_content: str):
         pass
 
 
+async def _run_runtime_validation(context: WorkflowContext) -> None:
+    """
+    v0 runtime validation hook.
+
+    - Disabled by default (RUNTIME_VALIDATION_ENABLED=false).
+    - When disabled: marks context.runtime_validation_status = NOT_CONFIGURED.
+    - When enabled but compilation failed: marks SKIPPED.
+    - When enabled and compile succeeded: placeholder — future task will run binary.
+    - NEVER executes user binaries in v0. NEVER fakes success.
+    """
+    from app.config.settings import settings
+
+    enabled = settings.RUNTIME_VALIDATION_ENABLED
+    context.runtime_validation_enabled = enabled
+
+    if not enabled:
+        context.runtime_validation_status = "NOT_CONFIGURED"
+        context.runtime_validation_reason = (
+            "Runtime validation is disabled (RUNTIME_VALIDATION_ENABLED=false). "
+            "HIPForge v0 reports compile-validated migrations only."
+        )
+        return
+
+    if not context.compilation_success:
+        context.runtime_validation_status = "SKIPPED"
+        context.runtime_validation_reason = "Compilation did not succeed; runtime validation skipped."
+        return
+
+    # ponytail: v0 placeholder — do not execute binary, do not fake PASSED.
+    # Upgrade path: invoke binary under rocm-smi / rocsmi guard, capture stdout, compare.
+    context.runtime_validation_status = "SKIPPED"
+    context.runtime_validation_reason = (
+        "Runtime validation is enabled but not yet implemented for this migration path. "
+        "No binary was executed. Set up a gpu_real test suite for validated execution."
+    )
+    logger.info("[RUNTIME_VALIDATION] Enabled but not implemented for v0 — marked SKIPPED.")
+
+
 # ---------------------------------------------------------------------------
 # Unchanged stub handlers (do not modify)
 # ---------------------------------------------------------------------------
@@ -106,6 +144,18 @@ async def handle_preflight(context: WorkflowContext) -> str:
         run_preflight,
     )
 
+    # Load target architecture from Redis metadata before build system generation
+    try:
+        from app.redis.client import redis_client
+        from app.redis.keys import metadata_key
+
+        metadata = await redis_client.hgetall(metadata_key(context.migration_id))
+        target_arch = metadata.get("target_architecture") if isinstance(metadata, dict) else None
+        if target_arch:
+            context.target_gpu_architecture = target_arch
+    except Exception as exc:
+        logger.warning("[PREFLIGHT] Failed to read migration metadata: %s", exc)
+
     logger.info("[PREFLIGHT] Running project scan and environment validation for %s", context.migration_id)
 
     # ── Project scan (early, before arch check — project issues take priority) ──
@@ -122,6 +172,15 @@ async def handle_preflight(context: WorkflowContext) -> str:
     input_dir = workspace / "input"
     scan = scan_project(input_dir)
     context.project_scan = scan
+    # Populate structured inventory for reporting
+    context.project_inventory = scan.get("project_inventory") or {
+        "input_kind": scan.get("input_kind", "unknown"),
+        "cuda_source_files": scan.get("cu_files", []),
+        "hip_source_files": scan.get("hip_files", []),
+        "header_files": scan.get("header_files", []),
+        "build_system_detected": scan.get("build_system_detected", "none"),
+        "generated_makefile_fallback": scan.get("compile_strategy", "").startswith("generated_"),
+    }
 
     summary = project_summary_line(scan)
     logger.info("[PREFLIGHT] %s", summary)
@@ -213,21 +272,9 @@ async def handle_preflight(context: WorkflowContext) -> str:
         logger.info("[PREFLIGHT] Build plan: %s", strategy)
     # ── End project scan ─────────────────────────────────────────────────
 
-    # ── Arch validation (after project scan — less fundamental) ─────────
-    try:
-        from app.redis.client import redis_client
-        from app.redis.keys import metadata_key
-
-        metadata = await redis_client.hgetall(metadata_key(context.migration_id))
-        target_arch = metadata.get("target_architecture") if isinstance(metadata, dict) else None
-        if target_arch:
-            context.target_gpu_architecture = target_arch
-    except Exception as exc:
-        logger.warning("[PREFLIGHT] Failed to read migration metadata: %s", exc)
-
     import re
     arch = getattr(context, "target_gpu_architecture", None) or "unknown"
-    if not re.match(r'^gfx\d{3,4}[a-z]?$', arch):
+    if not re.match(r'^gfx\d{2,4}[a-z]?$', arch):
         msg = f"Target architecture '{arch}' has an unsupported format. Expected a name like gfx90a, gfx908, gfx906, gfx942, gfx1100."
         logger.error("[PREFLIGHT] %s", msg)
         context.infrastructure_error = True
@@ -678,7 +725,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
     target_arch = None
     try:
         metadata = await redis_client.hgetall(metadata_key(context.migration_id))
-        target_arch = metadata.get("target_architecture")
+        target_arch = metadata.get("target_architecture") or getattr(context, "target_gpu_architecture", "gfx90a")
     except Exception as exc:
         logger.warning("[COMPILING] Failed to read target architecture from Redis: %s", exc)
 
@@ -734,6 +781,8 @@ async def handle_compiling(context: WorkflowContext) -> str:
     # Persist compiler log (logs are never overwritten per spec)
     with open(log_path, "w", encoding="utf-8") as f:
         f.write(f"=== HIPForge Compile Attempt {attempt_num} ===\n")
+        if "command" in result:
+            f.write(f"Command: {result['command']}\n")
         f.write(f"Source: {hip_source}\n")
         f.write(f"Binary: {binary_path}\n\n")
         f.write("--- stdout ---\n")
@@ -746,6 +795,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
     comp_ok = result["success"]
     compiler_errors = result.get("errors", [])
     last_stderr = result.get("stderr", "")
+    context.last_compile_command = result.get("command", "")
 
     if comp_ok:
         logger.info("[COMPILING] Compilation succeeded on attempt %d. Commencing Semantic Post-Validation...", attempt_num)
@@ -810,6 +860,16 @@ async def handle_compiling(context: WorkflowContext) -> str:
     context.compiler_errors = compiler_errors
     context.last_compile_stderr = last_stderr
 
+    # ── Validation confidence ────────────────────────────────────────────
+    from app.compiler.validation_confidence import compute_confidence
+    hipify_ok = bool(context.hipify_output_path)
+    level, reason = compute_confidence(hipify_ok=hipify_ok, compile_ok=comp_ok)
+    context.validation_confidence = level
+    context.validation_confidence_reason = reason
+
+    # ── Runtime validation hook (v0: opt-in only, no binary execution by default) ─
+    await _run_runtime_validation(context)
+
     # Check for infrastructure/system compilation failures to prevent calling AI agents
     if not comp_ok:
         from app.compiler.error_parser import classify_compiler_error
@@ -818,6 +878,22 @@ async def handle_compiling(context: WorkflowContext) -> str:
         if category not in {"USER_CODE_ERROR", "UNSUPPORTED_FEATURE", "COMPILATION_ERROR"}:
             logger.error("[COMPILING] Non-code compile error detected: %s. Aborting to report generation.", category)
             context.infrastructure_error = True
+            is_missing_dep = (
+                category == "DEPENDENCY_ERROR"
+                or "undefined symbol" in last_stderr.lower()
+                or "undefined reference" in last_stderr.lower()
+                or "cannot find" in last_stderr.lower()
+                or "no such file" in last_stderr.lower()
+            )
+            if is_missing_dep:
+                context.error_category = "DEPENDENCY_ERROR"
+                from app.compiler.error_parser import extract_missing_symbol
+                missing = extract_missing_symbol(last_stderr)
+                missing_hint = f" Missing: '{missing}'." if missing else ""
+                context.recommended_next_action = (
+                    f"AI repair skipped because this appears to be a missing project dependency.{missing_hint} "
+                    "Upload the full project folder or include the file/library that defines the missing symbol."
+                )
     else:
         context.error_category = "NONE"
 
@@ -891,6 +967,27 @@ async def handle_analyzing(context: WorkflowContext) -> str:
             "root_cause": f"Compilation failed due to a {classification} issue: {stderr_val}",
             "repair_plan": []
         }
+        # Check if the failure is a missing symbol or missing library/object/source dependency
+        is_missing_dep = (
+            classification == "DEPENDENCY_ERROR"
+            or "undefined symbol" in stderr_val.lower()
+            or "undefined reference" in stderr_val.lower()
+            or "cannot find" in stderr_val.lower()
+            or "no such file" in stderr_val.lower()
+        )
+        
+        if is_missing_dep:
+            classification = "DEPENDENCY_ERROR"
+            context.error_category = "DEPENDENCY_ERROR"
+            from app.compiler.error_parser import extract_missing_symbol
+            missing = extract_missing_symbol(stderr_val)
+            missing_hint = f" Missing: '{missing}'." if missing else ""
+            context.failure_reason = f"Compilation failed due to missing dependency or symbol: {stderr_val[:300]}"
+            context.recommended_next_action = (
+                f"AI repair skipped because this appears to be a missing project dependency.{missing_hint} "
+                "Upload the full project folder or include the file/library that defines the missing symbol."
+            )
+
         # Store lesson so future runs skip faster
         await store_lesson(
             redis_client,

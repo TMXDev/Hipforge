@@ -108,8 +108,8 @@ async def test_retry_budget_2_gives_2_repairs_3_compiles(redis_test_client):
     assert analyze_count == 2, f"Expected 2 ANALYZING, got {analyze_count}"
     assert patching_count == 2, f"Expected 2 PATCHING, got {patching_count}"
     assert compiling_count == 3, f"Expected 3 COMPILING, got {compiling_count}"
-    assert visited_states[-1] == "GENERATING_REPORT", "Retry exhaustion reaches GENERATING_REPORT"
-    assert engine.context.current_state == "FAILED", "State machine transitions to FAILED after GENERATING_REPORT"
+    assert visited_states[-1] == "FAILED", "Retry exhaustion reaches FAILED"
+    assert engine.context.current_state is None
     assert engine.context.current_attempt == 2
     print(f"  PASS: retry_budget=2 -> 2 repair cycles + 3 compile attempts")
 
@@ -118,7 +118,7 @@ async def test_retry_budget_2_gives_2_repairs_3_compiles(redis_test_client):
 # SCENARIO 3: gfx940 (format passes) vs invalid_arch (format fails)
 # ═══════════════════════════════════════════════════════════════════════════
 @pytest.mark.asyncio
-async def test_preflight_arch_validation(redis_test_client):
+async def test_preflight_arch_validation(redis_test_client, monkeypatch):
     """
     Tests the handle_preflight arch format check directly.
     invalid_arch -> format rejected -> UNSUPPORTED_FEATURE
@@ -153,8 +153,8 @@ async def test_preflight_arch_validation(redis_test_client):
     print(f"  PASS: invalid arch rejected at preflight")
 
     # -- Part B: gfx940 passes format check --
-    os.environ["USE_MOCK_COMPILER"] = "true"
-    os.environ["USE_MOCK_AI"] = "true"
+    monkeypatch.setenv("USE_MOCK_COMPILER", "true")
+    monkeypatch.setenv("USE_MOCK_AI", "true")
     ctx2 = WorkflowContext("test-pf-pass", "/tmp/pf-pass", retry_budget=2)
     ctx2.target_gpu_architecture = "gfx940"
     ctx2.migration_id = "mock-pf-pass2"
@@ -175,8 +175,6 @@ async def test_preflight_arch_validation(redis_test_client):
 
     assert ctx2.infrastructure_error is False, f"gfx940 should NOT be rejected at format check"
     print(f"  PASS: gfx940 has valid format (backend compiler will handle actual support)")
-    del os.environ["USE_MOCK_COMPILER"]
-    del os.environ["USE_MOCK_AI"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

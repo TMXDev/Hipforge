@@ -119,7 +119,6 @@ ALL_10_STATES = [
     "COMPILING",
     "ANALYZING",
     "PATCHING",
-    "RESEARCHING",
     "GENERATING_REPORT",
     "COMPLETED",
 ]
@@ -128,13 +127,13 @@ ALL_10_STATES = [
 def _make_mock_handle_compiling(original_handle):
     """
     Returns a mock handle_compiling that:
-    - Fails compilation until context.researched is True
+    - Fails compilation on attempt 0
     - Sets structured errors for the analysis/patching chain
-    - Succeeds after RESEARCHING stage completes
+    - Succeeds on attempt 1
     """
     async def mock_handle_compiling(context: WorkflowContext):
         await original_handle(context)
-        if not getattr(context, "researched", False):
+        if context.current_attempt == 0:
             context.compilation_success = False
             if not getattr(context, "compiler_errors", None):
                 context.compiler_errors = [
@@ -256,10 +255,10 @@ async def test_full_e2e_migration(http_client, cuda_source, mock_redis, tmp_path
             f"State {state!r} was never visited. Visited states: {sorted(visited_unique)}"
         )
 
-    # Assertion 6: COMPILING visited >= 3 times (initial fail, patch fail, final success)
+    # Assertion 6: COMPILING visited >= 2 times (initial fail, final success)
     compiling_count = visited_states.count("COMPILING")
-    assert compiling_count >= 3, (
-        f"COMPILING should appear at least 3× (initial, post-patch, final), "
+    assert compiling_count >= 2, (
+        f"COMPILING should appear at least 2× (initial, post-patch), "
         f"but appeared {compiling_count}× in: {visited_states}"
     )
 
@@ -289,7 +288,6 @@ async def test_full_e2e_migration(http_client, cuda_source, mock_redis, tmp_path
         "COMPILING",
         "ANALYZING",
         "PATCHING",
-        "RESEARCHING",
         "GENERATING_REPORT",
         "COMPLETED",
     }

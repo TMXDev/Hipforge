@@ -94,6 +94,16 @@ class WorkflowEngine:
             if not handler:
                 raise ValueError(f"No handler registered for state: {state}")
                 
+            # Record state start in workflow trace
+            if not hasattr(self.context, "workflow_trace") or self.context.workflow_trace is None:
+                self.context.workflow_trace = []
+            from datetime import datetime, timezone
+            self.context.workflow_trace.append({
+                "event": "state_start",
+                "state": state,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+
             # Publish started event before calling the handler
             await publish_event(
                 migration_id=self.context.migration_id,
@@ -134,6 +144,11 @@ class WorkflowEngine:
                     status="completed",
                     message=f"Completed stage {state} successfully."
                 )
+                self.context.workflow_trace.append({
+                    "event": "state_success",
+                    "state": state,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
             else:
                 # Publish failed event with error message on failure
                 await publish_event(
@@ -142,10 +157,28 @@ class WorkflowEngine:
                     status="failed",
                     message=f"Stage {state} failed: {error_msg}"
                 )
+                self.context.failed_stage = state
+                if state == "COMPILING":
+                    self.context.main_error = getattr(self.context, "last_compile_stderr", "") or error_msg
+                else:
+                    self.context.main_error = error_msg
+                self.context.workflow_trace.append({
+                    "event": "state_failure",
+                    "state": state,
+                    "error": self.context.main_error,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
                 
             from app.services.journal_service import write_state_journal_entry; await write_state_journal_entry(self.context)
             next_state = determine_next_state(state, success, self.context)
             
+            self.context.workflow_trace.append({
+                "event": "transition",
+                "from_state": state,
+                "to_state": next_state,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+
             previous_state = state
             self.context.current_state = next_state
             

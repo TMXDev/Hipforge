@@ -110,8 +110,8 @@ async def test_migration_worker_integration(redis_integration_client):
     original_handle_compiling = app.workflow_engine.states.handle_compiling
     
     async def mock_handle_compiling(context):
-        # compilation succeeds only after RESEARCHING stage completes (setting researched to True)
-        if getattr(context, "researched", False):
+        # compilation succeeds on attempt 1
+        if context.current_attempt > 0:
             context.compilation_success = True
         else:
             context.compilation_success = False
@@ -165,7 +165,7 @@ async def test_migration_worker_integration(redis_integration_client):
         # Assert all 10 stages were traversed and published
         expected_stages = {
             "QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING",
-            "ANALYZING", "PATCHING", "RESEARCHING", "GENERATING_REPORT", "COMPLETED"
+            "ANALYZING", "PATCHING", "GENERATING_REPORT", "COMPLETED"
         }
         
         stages_published = {evt.get("stage") for evt in events_collected if evt.get("stage")}

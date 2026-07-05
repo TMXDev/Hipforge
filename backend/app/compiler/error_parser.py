@@ -122,6 +122,16 @@ def classify_compiler_error(stderr: str) -> str:
         or "libdevice" in stderr_lower
     ):
         return "DEPENDENCY_ERROR"
+    # Missing header (any .h file not found) — compiler error
+    if (
+        "fatal error:" in stderr_lower
+        and ".h" in stderr_lower
+        and ("no such file" in stderr_lower or "file not found" in stderr_lower)
+    ):
+        return "DEPENDENCY_ERROR"
+    # Missing source/object file referenced from Makefile or linker
+    if "no such file" in stderr_lower and re.search(r"\.(cu|hip|cpp|cc|o|obj)\b", stderr_lower):
+        return "DEPENDENCY_ERROR"
     if re.search(r"\brocm\b.*(installation|toolchain|sdk|runtime).*(not found|missing)", stderr_lower):
         return "TOOLCHAIN_ERROR"
 
@@ -154,9 +164,71 @@ def classify_compiler_error(stderr: str) -> str:
     if re.search(r'unsupported hip gpu architecture(?:\s*:|:)\s*(\S+)', stderr_lower) or re.search(r'gfx\d{2,4}[a-z]?\b', stderr_lower):
         return "UNSUPPORTED_FEATURE"
         
-    # NEW: unresolved symbol - linker error, needs user intervention for single files
+    # NEW: unresolved symbol / missing source reference — linker error, treat as DEPENDENCY_ERROR
     if "undefined symbol" in stderr_lower or "undefined reference" in stderr_lower:
-        return "UNRESOLVED_SYMBOL"
+        return "DEPENDENCY_ERROR"
 
     # Default to user code errors. Only this category triggers AI repair.
     return "USER_CODE_ERROR"
+
+
+def extract_missing_symbol(stderr: str) -> str:
+    """
+    Extracts the first missing symbol or file name from linker/compiler stderr.
+    Returns empty string if none found.
+    """
+    if not stderr:
+        return ""
+    # undefined symbol: foo  OR  undefined reference to `foo`
+    m = re.search(r'undefined (?:symbol|reference)[^:`]*?[:`]\s*[`\']?([\w:_<>~()+*&]+)', stderr)
+    if m:
+        return m.group(1).strip()
+    # Also handle: undefined reference to `foo` (backtick style)
+    m = re.search(r'undefined reference to\s+[`\']?([\w:_<>~()+*&]+)', stderr)
+    if m:
+        return m.group(1).strip()
+    # fatal error: 'foo.h' file not found
+    m = re.search(r'fatal error:\s*[\'"]?([\w./\-]+(?:\.h(?:pp)?|\.cu|\.hip|\.cpp))[\'"]?', stderr, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # cannot find -lFoo
+    m = re.search(r'cannot find\s+-l(\S+)', stderr)
+    if m:
+        return "-l" + m.group(1).strip()
+    return ""
+
+
+def extract_main_error(stderr: str) -> str:
+    """
+    Extracts the most significant line from compiler stderr output.
+    Priority hierarchy:
+    1. Linker/compiler fatal errors (e.g. containing "undefined symbol", "error:", "ld.lld: error", "clang++: error")
+    2. Make failures (containing "make:")
+    3. Warnings only if there are no fatal errors (containing "warning:")
+    4. Fallback to the first non-empty line of the stderr.
+    """
+    if not stderr:
+        return ""
+
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+
+    # 1. Linker/compiler fatal errors
+    fatal_indicators = ["undefined symbol", "undefined reference", "ld.lld: error", "clang++: error"]
+    for line in lines:
+        line_lower = line.lower()
+        if any(ind in line_lower for ind in fatal_indicators) or ("error:" in line_lower and "warning:" not in line_lower):
+            return line[:500]
+
+    # 2. Make failures
+    for line in lines:
+        line_lower = line.lower()
+        if "make:" in line_lower or "make " in line_lower:
+            return line[:500]
+
+    # 3. Warnings
+    for line in lines:
+        if "warning:" in line.lower():
+            return line[:500]
+
+    # Fallback to the first non-empty line
+    return lines[0][:500] if lines else stderr[:500]

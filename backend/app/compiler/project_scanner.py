@@ -18,6 +18,7 @@ GENERATED_BUILD_PLAN = "GENERATED_BUILD_PLAN"
 MULTIPLE_ENTRYPOINTS = "MULTIPLE_ENTRYPOINTS"
 NO_ENTRYPOINT = "NO_ENTRYPOINT"
 LIBRARY_ONLY_INPUT = "LIBRARY_ONLY_INPUT"
+DEPENDENCY_ERROR = "DEPENDENCY_ERROR"
 
 CUDA_EXTENSIONS = {".cu", ".cuh"}
 HIP_EXTENSIONS = {".hip"}
@@ -207,9 +208,32 @@ def scan_project(input_dir: Path) -> Dict:
     else:
         compile_strategy = "direct_single_file"
 
+    # Determine input_kind: ponytail — cheapest check first
+    if len(cu_files) + len(hip_files) + len(cpp_files) == 1 and not header_files and not build_files:
+        input_kind = "single_file"
+    elif has_build_system:
+        input_kind = "folder"
+    elif len(all_files) > 0:
+        input_kind = "folder"
+    else:
+        input_kind = "unknown"
+
+    project_inventory = {
+        "input_kind": input_kind,
+        "cuda_source_files": [str(f) for f in cu_files],
+        "hip_source_files": [str(f) for f in hip_files],
+        "header_files": [str(f) for f in header_files],
+        "build_system_detected": build_system_detected,
+        "generated_makefile_fallback": (
+            not has_build_system
+            and compile_strategy.startswith("generated_")
+        ),
+    }
+
     return {
         "category": category,
         "message": message,
+        "input_kind": input_kind,
         "cu_files": [str(f) for f in cu_files],
         "cuh_files": [str(f) for f in cuh_files],
         "hip_files": [str(f) for f in hip_files],
@@ -230,6 +254,7 @@ def scan_project(input_dir: Path) -> Dict:
         "entrypoint_count": entrypoint_count,
         "compile_strategy": compile_strategy,
         "file_count": len(all_files),
+        "project_inventory": project_inventory,
     }
 
 

@@ -12,27 +12,17 @@ def determine_next_state(current_state: str, success: bool, context: WorkflowCon
         return "GENERATING_REPORT"
 
     if current_state == "COMPILING" and not success:
-        # Check if we already researched (final try)
-        if getattr(context, "researched", False):
-            return "GENERATING_REPORT"
-
         retry_budget = max(getattr(context, "retry_budget", 0), 0)
         current_attempt = max(getattr(context, "current_attempt", 0), 0)
 
-        if retry_budget > 0 and current_attempt == 0:
+        if current_attempt < retry_budget:
             return "ANALYZING"
-
-        if current_attempt + 1 < retry_budget:
-            return "ANALYZING"
-
-        if retry_budget > 0:
-            return "RESEARCHING"
 
         return "GENERATING_REPORT"
             
     if current_state == "RESEARCHING":
         context.researched = True
-        return "COMPILING"
+        return "GENERATING_REPORT"
         
     # Standard successful/normal transitions mapping
     success_transitions = {

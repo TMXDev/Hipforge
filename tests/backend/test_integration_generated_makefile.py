@@ -23,11 +23,11 @@ from app.workspace.manager import get_workspace_path
 
 
 @pytest.mark.asyncio
-async def test_generated_makefile_e2e(redis_test_client):
+async def test_generated_makefile_e2e(redis_test_client, monkeypatch):
     root = Path(tempfile.mkdtemp(prefix="hipforge_int_"))
-    os.environ["WORKSPACE_PATH"] = str(root)
-    os.environ["USE_MOCK_COMPILER"] = "true"
-    os.environ["USE_MOCK_AI"] = "true"
+    monkeypatch.setenv("WORKSPACE_PATH", str(root))
+    monkeypatch.setenv("USE_MOCK_COMPILER", "true")
+    monkeypatch.setenv("USE_MOCK_AI", "true")
 
     migration_id = "int-gen-makefile-e2e"
     ws = get_workspace_path(migration_id)
@@ -62,10 +62,6 @@ async def test_generated_makefile_e2e(redis_test_client):
         engine.state_registry[name] = wrap(handler, name)
 
     final_state = await engine.run()
-
-    del os.environ["USE_MOCK_COMPILER"]
-    del os.environ["USE_MOCK_AI"]
-    del os.environ["WORKSPACE_PATH"]
 
     gen = ws / "generated"
     mf = gen / "Makefile.hipforge"

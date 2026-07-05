@@ -5,12 +5,19 @@ import urllib.request
 from unittest.mock import MagicMock
 import pytest
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "e2e_real: marks test as real end-to-end smoke test using actual ROCm tools and Redis"
+    )
+
 @pytest.fixture(autouse=True)
-def mock_external_calls(monkeypatch):
+def mock_external_calls(request, monkeypatch):
     """
     Globally mocks subprocess.run and urllib.request.urlopen for tests to prevent
     real ROCm/Fireworks calls in offline test environments.
     """
+    if request.node.get_closest_marker("e2e_real") is not None:
+        return
     original_run = subprocess.run
 
     def custom_run(args, **kwargs):
@@ -103,19 +110,7 @@ def mock_external_calls(monkeypatch):
             req_data_lower = req_data.lower()
             
             # Formulate mock JSON responses representing different agents
-            if "identify the root cause" in req_data_lower or "analysis" in req_data_lower:
-                body = {
-                    "summary": "Compilation failed due to unsupported CUDA memory copy API.",
-                    "root_cause": "cudaMemcpyAsync is not fully equivalent to hipMemcpyAsync in this context.",
-                    "affected_files": ["kernel.hip"],
-                    "affected_lines": [42, 67],
-                    "confidence": 0.92,
-                    "repair_plan": [
-                        "Replace hipMemcpyAsync with hipMemcpyWithStream.",
-                    ]
-                }
-                payload_content = json.dumps(body)
-            elif "modify source code to patch" in req_data_lower:
+            if "patch agent" in req_data_lower or "modify source code to patch" in req_data_lower or "expected output" in req_data_lower:
                 body = {
                     "summary": "Applied targeted fix.",
                     "modified_files": ["kernel.hip"],
@@ -130,6 +125,18 @@ def mock_external_calls(monkeypatch):
                 payload_content = json.dumps(body)
                 # Wrap in markdown fence to make it realistic for patch agent
                 payload_content = "Here is the patched code:\n```hip\n" + payload_content + "\n```"
+            elif "analysis agent" in req_data_lower or "identify the root cause" in req_data_lower or "analysis" in req_data_lower:
+                body = {
+                    "summary": "Compilation failed due to unsupported CUDA memory copy API.",
+                    "root_cause": "cudaMemcpyAsync is not fully equivalent to hipMemcpyAsync in this context.",
+                    "affected_files": ["kernel.hip"],
+                    "affected_lines": [42, 67],
+                    "confidence": 0.92,
+                    "repair_plan": [
+                        "Replace hipMemcpyAsync with hipMemcpyWithStream.",
+                    ]
+                }
+                payload_content = json.dumps(body)
             elif "documentation and research" in req_data_lower or "research" in req_data_lower:
                 body = {
                     "findings": ["Found stream sync issue in ROCm docs."],

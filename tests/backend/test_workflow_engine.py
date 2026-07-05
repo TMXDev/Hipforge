@@ -216,7 +216,8 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
         "ANALYZING",
         "PATCHING",
         "COMPILING",
-        "RESEARCHING",
+        "ANALYZING",
+        "PATCHING",
         "COMPILING",
         "GENERATING_REPORT",
         "FAILED"
@@ -225,7 +226,7 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
     assert visited_states == expected_order
     assert final_state == "FAILED"
     assert engine.context.current_state is None
-    assert engine.context.current_attempt == 1
+    assert engine.context.current_attempt == 2
     
     # Verify Redis status key contains "FAILED"
     from app.redis.client import redis_client
@@ -237,8 +238,8 @@ def test_workflow_engine_failure_exhausted_retries(redis_test_client):
     redis_status = asyncio.run(check_redis())
     assert redis_status == "FAILED"
 
-    # 13 states run, 26 events total
-    assert len(events_received) == 26
+    # 14 states run, 28 events total
+    assert len(events_received) == 28
     for evt in events_received:
         assert evt["migration_id"] == migration_id
         assert "timestamp" in evt

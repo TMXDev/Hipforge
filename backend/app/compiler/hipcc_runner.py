@@ -76,7 +76,8 @@ def write_compilation_cache(source_path: str, target_arch: str, result: dict, bi
             "success": result["success"],
             "stdout": result.get("stdout", ""),
             "stderr": result.get("stderr", ""),
-            "errors": serializable_errors
+            "errors": serializable_errors,
+            "command": result.get("command", "")
         }
         
         with open(meta_file, "w", encoding="utf-8") as f:
@@ -158,7 +159,8 @@ class HipccRunner:
                 "binary_path": output_path if meta["success"] else "",
                 "errors": errors,
                 "stdout": meta.get("stdout", "") + "\n[Cache Hit] Output loaded from compilation cache.",
-                "stderr": meta.get("stderr", "")
+                "stderr": meta.get("stderr", ""),
+                "command": meta.get("command", "")
             }
 
         # Cache miss: compile
@@ -194,7 +196,8 @@ class HipccRunner:
                         "binary_path": "",
                         "errors": parse_compiler_errors(stderr),
                         "stdout": "",
-                        "stderr": stderr
+                        "stderr": stderr,
+                        "command": f"hipcc {source_path} -o {output_path} --offload-arch={target_arch or 'gfx90a'}"
                     }
                 # Successful mock compile
                 with open(output_path, "w", encoding="utf-8") as f:
@@ -204,7 +207,8 @@ class HipccRunner:
                     "binary_path": output_path,
                     "errors": [],
                     "stdout": "Compiled successfully (mock)",
-                    "stderr": ""
+                    "stderr": "",
+                    "command": f"hipcc {source_path} -o {output_path} --offload-arch={target_arch or 'gfx90a'}"
                 }
             except Exception as e:
                 err_msg = f"Mock compiler error: {str(e)}"
@@ -220,7 +224,8 @@ class HipccRunner:
                     "binary_path": "",
                     "errors": [fallback_err],
                     "stdout": "",
-                    "stderr": err_msg
+                    "stderr": err_msg,
+                    "command": f"hipcc {source_path} -o {output_path} --offload-arch={target_arch or 'gfx90a'}"
                 }
 
         # ── Real sandboxed compilation mode ────────────────────────────────
@@ -305,7 +310,8 @@ class HipccRunner:
                 "binary_path": output_path if success else "",
                 "errors": errors,
                 "stdout": sandbox_res["stdout"],
-                "stderr": sandbox_res["stderr"]
+                "stderr": sandbox_res["stderr"],
+                "command": " ".join(cmd)
             }
         except Exception as e:
             err_msg = f"Sandboxed compiler launch failed: {str(e)}"
@@ -322,7 +328,8 @@ class HipccRunner:
                 "binary_path": "",
                 "errors": [fallback_err],
                 "stdout": "",
-                "stderr": err_msg
+                "stderr": err_msg,
+                "command": " ".join(cmd) if 'cmd' in locals() else ""
             }
 
 

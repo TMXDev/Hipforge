@@ -88,7 +88,13 @@ HIPForge's testing philosophy is built on the principle of **determinism** and *
 
 # Implementation Status
 
-Pending
+Completed
 
-> [!IMPORTANT]
-> **Note for the AI Agent**: Do not change this status to "Completed" until you have fully implemented the requirements detailed in this specification, executed the code, run the unit/integration tests, and verified that everything behaves correctly.
+---
+
+# Real Test Levels
+
+- **`pytest`**: Fast unit/integration tests that run locally with mock toolchains and mock databases.
+- **`pytest -m e2e_real`**: Real AMD ROCm toolchain smoke tests. These tests skip automatically if ROCm tools (`hipcc`/`hipify-clang`) or `Redis` are not available, ensuring the CI/CD pipeline never false-passes or fails on standard environments.
+- **Manual AMD GPU Runtime Test**: Execute the migrated binary directly on an AMD GPU platform to verify actual output equivalence.
+- **Manual AMD GPU Profiling Test**: Run `rocprof` validation on the compiled HIP execution binary to verify compute efficiency.

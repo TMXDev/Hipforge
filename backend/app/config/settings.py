@@ -57,6 +57,9 @@ class Settings:
     REQUIRE_HOST_HIPIFY: bool = os.getenv("REQUIRE_HOST_HIPIFY", "false").lower() == "true"
     REQUIRE_NINJA: bool = os.getenv("REQUIRE_NINJA", "false").lower() == "true"
     MIN_FREE_DISK_BYTES: int = int(os.getenv("HIPFORGE_MIN_FREE_DISK_BYTES", str(512 * 1024 * 1024)))
+    # Runtime validation: disabled by default — v0 is compile-validated, not runtime-verified.
+    # Set RUNTIME_VALIDATION_ENABLED=true only in environments with AMD GPU hardware.
+    RUNTIME_VALIDATION_ENABLED: bool = os.getenv("RUNTIME_VALIDATION_ENABLED", "false").lower() == "true"
 
 
 

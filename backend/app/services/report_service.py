@@ -66,6 +66,30 @@ def _get_final_source(workspace_path: Path, original_filename: str) -> Optional[
     return None
 
 
+def get_skipped_ai_repair_reason(context: Any) -> Optional[str]:
+    """
+    Computes why AI repair was skipped during the migration.
+    """
+    compilation_success = getattr(context, "compilation_success", False)
+    actual_attempts = getattr(context, "current_attempt", 0)
+    retry_budget = getattr(context, "retry_budget", 0)
+    error_category = getattr(context, "error_category", "NONE")
+
+    if compilation_success and actual_attempts == 0:
+        return "Not needed: compilation succeeded on first attempt."
+    if error_category in ("NO_PROJECT_FILES", "ENVIRONMENT_FAIL") or getattr(context, "infrastructure_error", False):
+        return f"Skipped: migration aborted due to infrastructure/preflight error ({error_category})."
+    if retry_budget == 0 and not compilation_success:
+        return "Skipped: retry budget set to 0."
+
+    journal = getattr(context, "migration_journal", [])
+    ai_requests = len([entry for entry in journal if entry.get("analysis_summary") or entry.get("patch_summary") or entry.get("research_summary")])
+    if ai_requests > 0:
+        return None
+
+    return "Skipped: no compile failure encountered."
+
+
 async def generate_markdown_report(migration_id: str, context: Any) -> None:
     """
     Generates reports/migration_report.md summarizing the migration session,
@@ -123,6 +147,12 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     journal = getattr(context, "migration_journal", [])
 
+    compile_attempts = len(log_summaries)
+    ai_repair_cycles = len([entry for entry in journal if entry.get("analysis_summary") or entry.get("patch_summary") or entry.get("research_summary")])
+    failed_stage = getattr(context, "failed_stage", "") or ""
+    main_error = getattr(context, "main_error", "") or ""
+    skipped_reason = get_skipped_ai_repair_reason(context) or ""
+
     # Build markdown report content
     lines = [
         f"# HIPForge Migration Report",
@@ -152,6 +182,26 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"## 4. Input Project Details",
         f"- **Original Files Uploaded**:"
     ]
+    
+    project_inventory = getattr(context, "project_inventory", None) or {}
+    if project_inventory:
+        lines.extend([
+            f"- **Input Kind**: `{project_inventory.get('input_kind', 'unknown')}`",
+            f"- **Build System**: `{project_inventory.get('build_system_detected', 'none')}`",
+            f"- **Generated Makefile Fallback**: `{'Yes' if project_inventory.get('generated_makefile_fallback') else 'No'}`",
+        ])
+
+    generated_makefile_path = getattr(context, "generated_makefile_path", None)
+    if generated_makefile_path:
+        lines.append(f"- **Generated Makefile Path**: `{generated_makefile_path}`")
+
+    source_files = getattr(context, "source_files", []) or []
+    if source_files:
+        lines.append(f"- **Source Files Compiled**: {', '.join(f'`{f}`' for f in source_files)}")
+
+    last_compile_cmd = getattr(context, "last_compile_command", "") or ""
+    if last_compile_cmd:
+        lines.append(f"- **Last Compile Command**: `{last_compile_cmd}`")
     
     for f in original_files:
         h = compute_file_hash(input_dir / f)
@@ -235,6 +285,35 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Compile Success/Failure**: `{status}`",
         f"- **Error Category**: `{failure_category}`",
         f"- **Total Migration Duration**: `{duration_seconds}s`",
+        f"- **Target Architecture**: `{getattr(context, 'target_gpu_architecture', 'gfx90a')}`",
+        f"- **Repair Budget**: `{getattr(context, 'retry_budget', 0)}`",
+        f"- **Compile Attempts**: `{compile_attempts}`",
+        f"- **AI Repair Cycles**: `{ai_repair_cycles}`",
+        f"- **Failed Stage**: `{failed_stage}`",
+        f"- **Main Error**: `{main_error}`",
+        f"- **Skipped AI Repair Reason**: `{skipped_reason}`",
+    ])
+
+    # 9b. Validation Confidence
+    val_confidence = getattr(context, "validation_confidence", "LOW")
+    val_reason = getattr(context, "validation_confidence_reason", "")
+    rt_enabled = getattr(context, "runtime_validation_enabled", False)
+    rt_status = getattr(context, "runtime_validation_status", "NOT_CONFIGURED")
+    rt_reason = getattr(context, "runtime_validation_reason", "")
+    prof_status = getattr(context, "profiling_status", "NOT_CONFIGURED")
+    lines.extend([
+        f"",
+        f"## 9b. Validation Confidence",
+        f"- **Validation Confidence**: `{val_confidence}`",
+        f"- **Confidence Reason**: {val_reason}",
+        f"- **Compile Validation Status**: `{status}`",
+        f"- **Runtime Validation Enabled**: `{'Yes' if rt_enabled else 'No'}`",
+        f"- **Runtime Validation Status**: `{rt_status}`",
+        f"- **Runtime Validation Reason**: {rt_reason or 'N/A'}",
+        f"- **Profiling Status**: `{prof_status}`",
+    ])
+
+    lines.extend([
         f"",
         f"## 10. Final Summary",
         f"- **Environment Summary**: `{preflight_report.get('readiness', 'n/a')}`",
@@ -324,13 +403,16 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         project_scan_json = {
             "classification": project_scan.get("category") or "standard_cuda",
             "message": project_scan.get("message", ""),
+            "input_kind": project_scan.get("input_kind", "unknown"),
             "compile_strategy": project_scan.get("compile_strategy", ""),
             "generated_build_plan": getattr(context, "generated_build_plan", False),
+            "generated_makefile_path": getattr(context, "generated_makefile_path", None),
             "cu_file_count": len(project_scan.get("cu_files", [])),
             "hip_file_count": len(project_scan.get("hip_files", [])),
             "cpp_file_count": len(project_scan.get("cpp_files", [])),
             "header_file_count": len(project_scan.get("header_files", [])),
             "build_system": project_scan.get("build_system_detected", "none"),
+            "project_inventory": project_scan.get("project_inventory") or getattr(context, "project_inventory", {}),
         }
 
     # 3. Translation Summary
@@ -408,7 +490,17 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
             "error_category": getattr(context, "error_category", "NONE"),
             "total_migration_duration_seconds": duration_seconds,
             "initial_cuda_apis_detail": getattr(context, "initial_cuda_apis_detail", {}),
-            "remaining_cuda_apis_detail": getattr(context, "remaining_cuda_apis_detail", {})
+            "remaining_cuda_apis_detail": getattr(context, "remaining_cuda_apis_detail", {}),
+            "target_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
+            "repair_budget": getattr(context, "retry_budget", 0),
+            "compile_attempts": len(compilation_history),
+            "ai_repair_cycles": len(analysis_summaries),
+            "failed_stage": getattr(context, "failed_stage", None),
+            "main_error": getattr(context, "main_error", None),
+            "skipped_ai_repair_reason": get_skipped_ai_repair_reason(context),
+            "workflow_trace": getattr(context, "workflow_trace", []),
+            "compile_command": getattr(context, "last_compile_command", "") or "",
+            "source_files_compiled": getattr(context, "source_files", []) or [],
         },
         "migration_journal_excerpt": journal,
         "generated_artifacts": [
@@ -450,6 +542,23 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "elapsed_time_seconds": duration_seconds,
         "failure_category": failure_category,
         "recommended_next_action": next_action,
+        "target_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
+        "repair_budget": getattr(context, "retry_budget", 0),
+        "compile_attempts": len(compilation_history),
+        "ai_repair_cycles": len(analysis_summaries),
+        "failed_stage": getattr(context, "failed_stage", None),
+        "main_error": getattr(context, "main_error", None),
+        "skipped_ai_repair_reason": get_skipped_ai_repair_reason(context),
+    }
+
+    report_data["validation_confidence"] = {
+        "validation_confidence": getattr(context, "validation_confidence", "LOW"),
+        "validation_confidence_reason": getattr(context, "validation_confidence_reason", ""),
+        "compile_validation_status": status,
+        "runtime_validation_enabled": getattr(context, "runtime_validation_enabled", False),
+        "runtime_validation_status": getattr(context, "runtime_validation_status", "NOT_CONFIGURED"),
+        "runtime_validation_reason": getattr(context, "runtime_validation_reason", ""),
+        "profiling_status": getattr(context, "profiling_status", "NOT_CONFIGURED"),
     }
 
     def make_serializable(obj):

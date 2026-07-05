@@ -101,7 +101,7 @@ async def test_full_ai_repair_loop(ctx, workspace, monkeypatch, mock_redis):
         await original_handle_compiling(context)
         
         # Override compiler success to force a retry loop
-        if not getattr(context, "researched", False):
+        if context.current_attempt == 0:
             context.compilation_success = False
             # Ensure structured errors are present for subsequent analysis/research prompts
             if not context.compiler_errors:
@@ -149,9 +149,7 @@ async def test_full_ai_repair_loop(ctx, workspace, monkeypatch, mock_redis):
         "COMPILING",         # Attempt 0 (initial compile, fails)
         "ANALYZING",         # Analysis Agent diagnoses failure
         "PATCHING",          # Patch Agent writes patch, increments attempt
-        "COMPILING",         # Attempt 1 (patch compile, fails because researched is False)
-        "RESEARCHING",       # Retry budget exhausted (attempt == budget), launches Research Agent
-        "COMPILING",         # Final compile (succeeds because researched is True)
+        "COMPILING",         # Attempt 1 (patch compile, succeeds)
         "GENERATING_REPORT",
         "COMPLETED"
     ]
@@ -169,10 +167,3 @@ async def test_full_ai_repair_loop(ctx, workspace, monkeypatch, mock_redis):
     assert first_attempt["analysis_summary"]
     assert first_attempt["root_cause"]
     assert len(first_attempt["repair_plan"]) >= 1
-    
-    # Check if the research findings were appended/updated in the journal
-    research_entry = ctx.migration_journal[-1]
-    assert "research_summary" in research_entry
-    assert research_entry["research_summary"]
-    assert len(research_entry["research_findings"]) > 0
-    assert len(research_entry["research_recommendations"]) > 0

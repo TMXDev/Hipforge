@@ -16,11 +16,11 @@ class TestLessonClassification:
 
     def test_classify_undefined_symbol(self):
         err = "undefined reference to `run_gelu`"
-        assert classify_compiler_error(err) == "UNRESOLVED_SYMBOL"
+        assert classify_compiler_error(err) == "DEPENDENCY_ERROR"
 
     def test_classify_undefined_symbol_alt(self):
         err = "undefined symbol: hipLaunchKernel"
-        assert classify_compiler_error(err) == "UNRESOLVED_SYMBOL"
+        assert classify_compiler_error(err) == "DEPENDENCY_ERROR"
 
 
 class TestLessonStorage:
