@@ -13,6 +13,7 @@ interface JournalViewerProps {
 
 /** Compiler result badge — luxury rectangular style */
 function CompilerBadge({ result }: { result: string }) {
+  if (result === "N/A") return null;
   if (result === "SUCCESS")
     return (
       <span className="inline-flex items-center gap-1.5 border border-emerald-600/20 bg-emerald-500/5 px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-emerald-700 dark:text-emerald-400">
