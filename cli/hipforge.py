@@ -332,7 +332,7 @@ async def stream_logs(host_url: str, migration_id: str):
     return None
 
 def download_and_extract(host_url: str, migration_id: str, output_path: Path):
-    """Downloads the completed zip report package and extracts it."""
+    """Downloads the completed zip report package, saves it, and extracts it to a clean subdirectory."""
     download_url = f"{host_url}/api/v1/migrate/{migration_id}/download"
     print_step(f"Downloading migration package from {download_url}...")
     
@@ -341,18 +341,24 @@ def download_and_extract(host_url: str, migration_id: str, output_path: Path):
         print_fail(f"Download failed with status: {response.status_code}")
         return False
         
+    output_path.mkdir(parents=True, exist_ok=True)
+    zip_out = output_path / f"{migration_id}.zip"
+    zip_out.write_bytes(response.content)
+    print_success(f"Saved migration ZIP to: {zip_out.resolve()}")
+    
+    extract_dir = output_path / migration_id
+    print_step(f"Extracting package to subdirectory: {extract_dir}...")
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    
     temp_zip = Path(tempfile.mktemp(suffix="_result.zip"))
     temp_zip.write_bytes(response.content)
-    
-    print_step(f"Extracting package to output directory {output_path}...")
-    output_path.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(temp_zip, 'r') as zipf:
-        zipf.extractall(output_path)
+        zipf.extractall(extract_dir)
         
     if temp_zip.exists():
         os.remove(temp_zip)
         
-    print_success(f"Successfully migrated and extracted project to: {output_path.resolve()}")
+    print_success(f"Successfully extracted project to: {extract_dir.resolve()}")
     return True
 
 async def run_migration(project_path: Path, target_arch: str, output_path: Path, host_url: str, retry_budget: int = 5):
