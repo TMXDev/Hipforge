@@ -45,7 +45,8 @@ def test_real_hipify_runner_success():
             ["hipify-clang", SAMPLE_CU, "-o", OUTPUT_HIP, "--"],
             capture_output=True,
             text=True,
-            check=False
+            check=False,
+            timeout=30
         )
 
 def test_real_hipify_runner_failure():

@@ -112,3 +112,16 @@ class TestLastCompileCommandSafety:
         data = json.loads(report_file.read_text(encoding="utf-8"))
         cm = data["migration_metrics"]["compile_command"]
         assert cm == ""
+
+
+# ── 4. Mock compiler confidence reason ─────────────────────────────
+
+def test_mock_compiler_confidence_reasons():
+    level, reason = compute_confidence(True, True, compiler_mocked=True)
+    assert level == MEDIUM
+    assert "(mock compiler mode)" in reason
+    assert "mocked" in reason
+
+    level, reason = compute_confidence(True, False, compiler_mocked=True)
+    assert level == LOW
+    assert "(mock compiler mode)" in reason

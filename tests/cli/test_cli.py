@@ -62,8 +62,8 @@ def test_download_and_extract(mock_get, tmp_path):
     success = download_and_extract("http://localhost:8000", "test_id", output_dir)
     
     assert success
-    assert (output_dir / "migrated.hip").exists()
-    assert (output_dir / "migrated.hip").read_text(encoding="utf-8") == "/* converted hip */"
+    assert (output_dir / "test_id" / "migrated.hip").exists()
+    assert (output_dir / "test_id" / "migrated.hip").read_text(encoding="utf-8") == "/* converted hip */"
 
 
 @pytest.mark.asyncio

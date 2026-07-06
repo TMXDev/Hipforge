@@ -100,7 +100,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_file = reports_dir / "migration_report.md"
 
-    status = "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED"
+    status = "PASSED" if getattr(context, "compilation_success", False) else "FAILED"
     actual_retries = getattr(context, "current_attempt", 0)
     preflight_report = getattr(context, "preflight_report", None) or {}
     failure_category = getattr(context, "error_category", "NONE")
@@ -110,22 +110,24 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     except Exception:
         next_action = getattr(context, "recommended_next_action", "") or "Run hipforge doctor and inspect the generated diagnostics."
 
-    # Calculate timestamps and duration
-    import time
+    import datetime
     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
     start_time = getattr(context, "start_time", now_str)
     
     start_time_secs = getattr(context, "start_time_secs", None)
     duration_seconds = 0.0
     if start_time_secs:
+        import time
         duration_seconds = round(time.time() - start_time_secs, 2)
     
     # project scan summary
-    project_scan = getattr(context, "project_scan", None) or {}
-    project_scan_summary = project_scan.get("message", "")
-    project_scan_category = project_scan.get("category", "")
-    project_scan_strategy = project_scan.get("compile_strategy", "")
-    scan_detail = project_summary_line(project_scan) if project_scan else ""
+    project_scan = getattr(context, "project_scan", {}) or {}
+    project_scan_category = project_scan.get("category", "standard_cuda")
+    project_scan_summary = project_scan.get("message", "standard_cuda")
+    project_scan_strategy = project_scan.get("compile_strategy", "none")
+    project_scan_summary = project_scan_summary or "standard_cuda"
+    project_scan_strategy = project_scan_strategy or "none"
+    scan_detail = project_scan.get("detail", "") or ""
 
     # original files
     input_dir = workspace_path / "input"
@@ -173,7 +175,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Critical Environment Failures**: `{len(preflight_report.get('critical_failures', []))}`",
         f"",
         f"## 3. Project Scan",
-        f"- **Classification**: `{project_scan_category or 'standard_cuda'}`",
+        f"- **Classification**: `{project_scan_category}`",
         f"- **Message**: {project_scan_summary}",
         f"- **Scan Detail**: {scan_detail}",
         f"- **Compile Strategy**: `{project_scan_strategy}`",
@@ -206,6 +208,29 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     for f in original_files:
         h = compute_file_hash(input_dir / f)
         lines.append(f"  - `{f}` (SHA-256: `{h}`)")
+
+    # ── File Lifecycle Tracking Section ──
+    lines.extend([
+        f"",
+        f"## 4b. File Lifecycle Tracking",
+    ])
+    file_lifecycle = getattr(context, "file_lifecycle", {})
+    if file_lifecycle:
+        for orig_path, meta in file_lifecycle.items():
+            lines.extend([
+                f"- **Original File**: `{orig_path}`",
+                f"  - **Generated Path**: `{meta.get('generated_path', 'N/A')}`",
+                f"  - **Converted**: `{'Yes' if meta.get('converted') else 'No'}`",
+                f"  - **Modified by AI**: `{'Yes' if meta.get('modified_by_ai') else 'No'}`",
+                f"  - **Included in Compile**: `{'Yes' if meta.get('included_in_compile') else 'No'}`",
+                f"  - **Compile Status**: `{meta.get('compile_status', 'NOT_RUN')}`",
+            ])
+            if meta.get("failure_reason"):
+                lines.append(f"  - **Failure Reason**: {meta.get('failure_reason')}")
+            if meta.get("skipped_reason"):
+                lines.append(f"  - **Skipped Reason**: {meta.get('skipped_reason')}")
+    else:
+        lines.append("- No file lifecycle tracking data available.")
 
     lines.extend([
         f"",
@@ -305,13 +330,20 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Skipped AI Repair Reason**: `{skipped_reason}`",
     ])
 
-    # 9b. Validation Confidence
     val_confidence = getattr(context, "validation_confidence", "LOW")
     val_reason = getattr(context, "validation_confidence_reason", "")
     rt_enabled = getattr(context, "runtime_validation_enabled", False)
     rt_status = getattr(context, "runtime_validation_status", "NOT_CONFIGURED")
     rt_reason = getattr(context, "runtime_validation_reason", "")
     prof_status = getattr(context, "profiling_status", "NOT_CONFIGURED")
+    
+    # Launcher memory contract and hardening details
+    expects_device_ptr = getattr(context, "launcher_expects_device_pointers", "N/A")
+    rt_perf = "Yes" if rt_status == "PASSED" else "No"
+    conf_type = "runtime-validated" if (rt_status == "PASSED" or val_confidence in ("HIGH", "PROFILED")) else "compile-only"
+    err_checks = getattr(context, "kernel_launch_error_checks", "none")
+    sync_status = getattr(context, "synchronization_status", "none")
+
     lines.extend([
         f"",
         f"## 9b. Validation Confidence",
@@ -322,6 +354,11 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Runtime Validation Status**: `{rt_status}`",
         f"- **Runtime Validation Reason**: {rt_reason or 'N/A'}",
         f"- **Profiling Status**: `{prof_status}`",
+        f"- **Launcher Expects Device Pointers**: `{expects_device_ptr}`",
+        f"- **Runtime Execution Performed**: `{rt_perf}`",
+        f"- **Validation Confidence Type**: `{conf_type}`",
+        f"- **Kernel Launch Error Checks**: `{err_checks}`",
+        f"- **Synchronization Status**: `{sync_status}`",
     ])
 
     lines.extend([
@@ -329,7 +366,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"## 10. Final Summary",
         f"- **Environment Summary**: `{preflight_report.get('readiness', 'n/a')}`",
         f"- **Migration Summary**: `{status}`",
-        f"- **Compile Summary**: `{'SUCCESS' if getattr(context, 'compilation_success', False) else 'FAILED or SKIPPED'}`",
+        f"- **Compile Summary**: `{'PASSED' if getattr(context, 'compilation_success', False) else 'FAILED or SKIPPED'}`",
         f"- **Repair Iterations**: `{actual_retries}`",
         f"- **Elapsed Time**: `{duration_seconds}s`",
         f"- **Failure Category**: `{failure_category}`",
@@ -364,7 +401,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     reports_dir.mkdir(parents=True, exist_ok=True)
     json_file = reports_dir / "migration_report.json"
 
-    status = "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED"
+    status = "PASSED" if getattr(context, "compilation_success", False) else "FAILED"
     actual_retries = getattr(context, "current_attempt", 0)
     preflight_report = getattr(context, "preflight_report", None) or {}
     failure_category = getattr(context, "error_category", "NONE")
@@ -479,6 +516,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     report_data = {
         "migration_summary": summary,
         "project_scan": project_scan_json,
+        "file_lifecycle": getattr(context, "file_lifecycle", {}),
         "input_project_details": {
             "original_files": original_files,
             "file_hashes": file_hashes
@@ -546,7 +584,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     report_data["final_summary"] = {
         "environment_summary": preflight_report.get("readiness", "n/a"),
         "migration_summary": status,
-        "compile_summary": "SUCCESS" if getattr(context, "compilation_success", False) else "FAILED or SKIPPED",
+        "compile_summary": "PASSED" if getattr(context, "compilation_success", False) else "FAILED or SKIPPED",
         "ai_usage_summary": {
             "requests_recorded": len(analysis_summaries) + len(patch_summaries) + len(research_summaries),
             "token_usage": "not captured by current client instrumentation",
@@ -572,6 +610,11 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "runtime_validation_status": getattr(context, "runtime_validation_status", "NOT_CONFIGURED"),
         "runtime_validation_reason": getattr(context, "runtime_validation_reason", ""),
         "profiling_status": getattr(context, "profiling_status", "NOT_CONFIGURED"),
+        "launcher_expects_device_pointers": getattr(context, "launcher_expects_device_pointers", "N/A"),
+        "runtime_execution_performed": "Yes" if getattr(context, "runtime_validation_status", "NOT_CONFIGURED") == "PASSED" else "No",
+        "validation_confidence_type": "runtime-validated" if (getattr(context, "runtime_validation_status", "NOT_CONFIGURED") == "PASSED" or getattr(context, "validation_confidence", "LOW") in ("HIGH", "PROFILED")) else "compile-only",
+        "kernel_launch_error_checks": getattr(context, "kernel_launch_error_checks", "none"),
+        "synchronization_status": getattr(context, "synchronization_status", "none"),
     }
 
     def make_serializable(obj):

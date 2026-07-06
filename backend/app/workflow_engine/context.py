@@ -123,3 +123,11 @@ class WorkflowContext:
         self.runtime_validation_enabled: bool = False
         # NOT_CONFIGURED | SKIPPED | PASSED | FAILED
         self.profiling_status: str = "NOT_CONFIGURED"
+
+        # ── Launcher safety metrics ──────────────────────────────────────
+        self.launcher_expects_device_pointers: str = "N/A"
+        self.kernel_launch_error_checks: str = "none"
+        self.synchronization_status: str = "none"
+
+        # ── File lifecycle tracking ──────────────────────────────────────
+        self.file_lifecycle: dict = {}

@@ -19,7 +19,44 @@ async def publish_event(migration_id: str, stage: str, status: str, message: str
         "state": stage,
         "details": message
     }
-    return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
+    try:
+        return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
+    except Exception as exc:
+        logger.warning(f"Failed to publish event to Redis: {exc}")
+        return 0
+
+
+async def publish_log(
+    migration_id: str,
+    message: str,
+    original_path: str = None,
+    generated_path: str = None,
+    stage: str = None,
+    status: str = None,
+    reason: str = None
+) -> int:
+    channel = events_channel(migration_id)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "type": "log",
+        "migration_id": migration_id,
+        "timestamp": timestamp,
+        "message": message,
+        "content": message,
+        "original_path": original_path,
+        "generated_path": generated_path,
+        "stage": stage,
+        "status": status,
+        "reason": reason
+    }
+    logger.info(f"[Live Log] {message} (stage={stage}, status={status})")
+    try:
+        return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
+    except Exception as exc:
+        logger.warning(f"Failed to publish log event to Redis: {exc}")
+        return 0
+
+
 import logging
 
 logger = logging.getLogger("workflow_engine")

@@ -88,7 +88,7 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
 
               let message = entry.analysis_summary || entry.patch_summary || entry.research_summary || "";
               if (rawState === "COMPILING") {
-                message = entry.compiler_result === "SUCCESS"
+                message = (entry.compiler_result === "SUCCESS" || entry.compiler_result === "PASSED")
                   ? "Compilation succeeded."
                   : "Compilation failed.";
               }

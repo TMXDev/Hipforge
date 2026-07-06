@@ -173,6 +173,204 @@ def replace_cuda_apis_in_file(file_path: Path, mapping: dict) -> int:
     return replacements_made
 
 
+def find_matching_brace(text: str, start_pos: int) -> int:
+    """Finds the index of the matching closing brace for the opening brace at start_pos."""
+    brace_count = 0
+    in_string = False
+    in_char = False
+    escape = False
+    in_comment = False
+    in_line_comment = False
+    
+    for i in range(start_pos, len(text)):
+        char = text[i]
+        
+        if escape:
+            escape = False
+            continue
+        if char == '\\':
+            escape = True
+            continue
+            
+        if in_line_comment:
+            if char == '\n':
+                in_line_comment = False
+            continue
+        if in_comment:
+            if char == '/' and i > 0 and text[i-1] == '*':
+                in_comment = False
+            continue
+            
+        if in_string:
+            if char == '"':
+                in_string = False
+            continue
+        if in_char:
+            if char == "'":
+                in_char = False
+            continue
+            
+        if char == '"':
+            in_string = True
+            continue
+        if char == "'":
+            in_char = True
+            continue
+        if char == '/' and i + 1 < len(text) and text[i+1] == '/':
+            in_line_comment = True
+            continue
+        if char == '/' and i + 1 < len(text) and text[i+1] == '*':
+            in_comment = True
+            continue
+            
+        if char == '{':
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                return i
+    return -1
+
+
+def harden_hip_content(content: str, validation_enabled: bool = False) -> tuple[str, dict]:
+    """
+    Scans for run_xxx launcher functions and inserts pointer, N <= 0 guards,
+    hipGetLastError(), and optionally hipDeviceSynchronize().
+    """
+    stats = {
+        "launcher_expects_device_pointers": "N/A",
+        "kernel_launch_error_checks": "none",
+        "synchronization_status": "none"
+    }
+    
+    # Pattern to find void run_xxx(...) signature and the opening {
+    pattern = re.compile(r'(extern\s+"C"\s+)?void\s+(run_\w+)\s*\(([^)]*)\)\s*\{', re.MULTILINE)
+    
+    matches = list(pattern.finditer(content))
+    if not matches:
+        return content, stats
+
+    # Sort matches in descending order of start position to replace from back to front
+    matches.sort(key=lambda m: m.start(), reverse=True)
+    
+    new_content = content
+    has_launcher = False
+    
+    for match in matches:
+        extern_c = match.group(1)
+        func_name = match.group(2)
+        params_str = match.group(3)
+        start_pos = match.end() - 1  # index of '{'
+        
+        # Match braces to get body
+        end_pos = find_matching_brace(new_content, start_pos)
+        if end_pos == -1:
+            continue
+            
+        has_launcher = True
+        body = new_content[start_pos + 1 : end_pos]
+        
+        # Parse pointer parameter names
+        pointer_names = []
+        for p in params_str.split(','):
+            p = p.strip()
+            if '*' in p:
+                ptr_match = re.search(r'\*\s*(\w+)', p)
+                if ptr_match:
+                    pointer_names.append(ptr_match.group(1))
+                    
+        # Parse size parameter name
+        size_name = None
+        for p in params_str.split(','):
+            p = p.strip()
+            size_match = re.search(r'\b(int|size_t|unsigned)\b.*\b(N|n|size|count|num_elements|len|length)\b', p)
+            if size_match:
+                size_name = size_match.group(2)
+                break
+                
+        # Analyze existing guards
+        has_existing_guards = ("nullptr" in body or "NULL" in body or "<= 0" in body)
+        has_kernel_launch = "<<" in body  # Match <<< or general hipLaunchKernel
+        has_error_check = "hipGetLastError" in body or "hipPeekAtLastError" in body
+        has_sync = "hipDeviceSynchronize" in body
+        
+        # Check if there is host allocation/copy logic (e.g. hipMalloc/hipMemcpy)
+        has_host_allocation_or_copy = ("hipMalloc" in body or "hipHostMalloc" in body or "hipMemcpy" in body or "malloc" in body)
+        
+        # Update pointer contract tracking
+        if pointer_names:
+            stats["launcher_expects_device_pointers"] = "Yes"
+            
+        # 1. Prefix: Device pointer comment & null/size check guards
+        prefix = ""
+        if not has_existing_guards:
+            comment_lines = []
+            if not has_host_allocation_or_copy:
+                if pointer_names:
+                    ptrs_str = " and ".join(pointer_names)
+                    comment_lines.append(f"    // {ptrs_str} are expected to be HIP device pointers.")
+                else:
+                    comment_lines.append("    // Expected to receive HIP device pointers.")
+            
+            guard_conds = []
+            if size_name:
+                guard_conds.append(f"{size_name} <= 0")
+            for ptr in pointer_names:
+                guard_conds.append(f"{ptr} == nullptr")
+                
+            if guard_conds:
+                if comment_lines:
+                    prefix += "\n" + "\n".join(comment_lines) + "\n"
+                prefix += f"    if ({' || '.join(guard_conds)}) {{\n        return;\n    }}\n"
+                stats["guards_inserted"] = True
+                
+        # 2. Suffix: hipGetLastError and hipDeviceSynchronize
+        suffix = ""
+        func_label = func_name.replace("run_", "").upper()
+        
+        if has_kernel_launch:
+            if not has_error_check:
+                suffix += f"\n    hipError_t launch_error = hipGetLastError();\n"
+                suffix += f"    if (launch_error != hipSuccess) {{\n"
+                suffix += f'        printf("{func_label} kernel launch failed: %s\\n", hipGetErrorString(launch_error));\n'
+                suffix += f"        return;\n"
+                suffix += f"    }}\n"
+                stats["kernel_launch_error_checks"] = "inserted"
+            else:
+                stats["kernel_launch_error_checks"] = "found"
+                
+            if not has_sync:
+                if validation_enabled:
+                    suffix += f"\n    hipError_t sync_error = hipDeviceSynchronize();\n"
+                    suffix += f"    if (sync_error != hipSuccess) {{\n"
+                    suffix += f'        printf("{func_label} kernel execution failed: %s\\n", hipGetErrorString(sync_error));\n'
+                    suffix += f"    }}\n"
+                    stats["synchronization_status"] = "inserted"
+                else:
+                    stats["synchronization_status"] = "skipped"
+            else:
+                stats["synchronization_status"] = "found"
+                
+        # Modify the function body
+        new_body = body
+        if prefix:
+            new_body = prefix + "\n" + new_body.lstrip()
+        if suffix:
+            new_body = new_body.rstrip() + "\n" + suffix + "\n"
+            
+        # Replace the body in content
+        new_content = new_content[:start_pos + 1] + new_body + new_content[end_pos:]
+        
+    # Ensure includes are present if we made changes or have launcher
+    if has_launcher:
+        if not re.search(r'#include\s+<hip/hip_runtime\.h>', new_content):
+            new_content = "#include <hip/hip_runtime.h>\n" + new_content
+        if (stats["kernel_launch_error_checks"] == "inserted" or stats["synchronization_status"] == "inserted") and not re.search(r'#include\s+<(cstdio|stdio\.h)>', new_content):
+            new_content = "#include <cstdio>\n" + new_content
+            
+    return new_content, stats
+
+
 async def validate_and_replace_cuda_apis(context: WorkflowContext):
     """
     Validation stage run immediately after hipify completes.
@@ -209,6 +407,36 @@ async def validate_and_replace_cuda_apis(context: WorkflowContext):
         if file_path.is_file() and file_path.suffix.lower() in (".hip", ".cuh", ".cpp", ".hpp", ".h"):
             replacements_count += replace_cuda_apis_in_file(file_path, CUDA_TO_HIP_MAP)
             
+    # 3b. Perform launcher safety checks post-processing
+    launcher_stats = {
+        "launcher_expects_device_pointers": "N/A",
+        "kernel_launch_error_checks": "none",
+        "synchronization_status": "none"
+    }
+    
+    for file_path in generated_dir.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in (".hip", ".cpp"):
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                new_content, stats = harden_hip_content(content, validation_enabled=context.runtime_validation_enabled)
+                if new_content != content:
+                    file_path.write_text(new_content, encoding="utf-8")
+                    logger.info(f"[Validation] Hardened HIP launcher functions in {file_path}")
+                # Aggregate stats
+                if stats["launcher_expects_device_pointers"] == "Yes":
+                    launcher_stats["launcher_expects_device_pointers"] = "Yes"
+                if stats["kernel_launch_error_checks"] == "inserted" or (stats["kernel_launch_error_checks"] == "found" and launcher_stats["kernel_launch_error_checks"] != "inserted"):
+                    launcher_stats["kernel_launch_error_checks"] = stats["kernel_launch_error_checks"]
+                if stats["synchronization_status"] == "inserted" or (stats["synchronization_status"] in ("found", "skipped") and launcher_stats["synchronization_status"] != "inserted"):
+                    launcher_stats["synchronization_status"] = stats["synchronization_status"]
+            except Exception as e:
+                logger.error(f"Failed to post-process launcher functions in {file_path}: {e}")
+                
+    # Update context with launcher safety metrics
+    context.launcher_expects_device_pointers = "Yes" if launcher_stats["launcher_expects_device_pointers"] == "Yes" else "N/A"
+    context.kernel_launch_error_checks = launcher_stats["kernel_launch_error_checks"]
+    context.synchronization_status = launcher_stats["synchronization_status"]
+
     # 4. Scan generated files again to find remaining CUDA APIs using AST validation
     generated_cuda_apis_after = {}
     for file_path in generated_dir.rglob("*"):
@@ -255,7 +483,10 @@ async def validate_and_replace_cuda_apis(context: WorkflowContext):
         "cuda_apis_remaining": cuda_apis_remaining,
         "initial_cuda_apis_detail": initial_cuda_apis,
         "remaining_cuda_apis_detail": generated_cuda_apis_after,
-        "replacements_made_during_validation": replacements_count
+        "replacements_made_during_validation": replacements_count,
+        "launcher_expects_device_pointers": context.launcher_expects_device_pointers,
+        "kernel_launch_error_checks": context.kernel_launch_error_checks,
+        "synchronization_status": context.synchronization_status,
     }
     
     try:

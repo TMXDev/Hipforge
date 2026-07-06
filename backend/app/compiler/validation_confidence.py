@@ -32,6 +32,7 @@ def compute_confidence(
     compile_ok: bool,
     runtime_ok: bool = False,
     profiled: bool = False,
+    compiler_mocked: bool = False,
 ) -> tuple[str, str]:
     """
     Returns (confidence_level, reason) deterministically.
@@ -41,11 +42,17 @@ def compute_confidence(
         compile_ok: hipcc/make exited 0
         runtime_ok: binary was executed on AMD GPU and output verified
         profiled:   rocprof or equivalent collected profiling data
+        compiler_mocked: compile was run via mock compiler
 
     Returns (level, reason) — never raises.
     """
     if not hipify_ok or not compile_ok:
-        return LOW, _REASONS[LOW]
+        reason = _REASONS[LOW]
+        if compiler_mocked:
+            reason = "hipify completed but compilation failed (mock compiler mode)"
+        return LOW, reason
+    if compiler_mocked:
+        return MEDIUM, "hipify succeeded but compilation was mocked (mock compiler mode); runtime execution was not performed"
     if profiled:
         return PROFILED, _REASONS[PROFILED]
     if runtime_ok:
@@ -60,4 +67,6 @@ if __name__ == "__main__":
     assert compute_confidence(True, True) == (MEDIUM, _REASONS[MEDIUM])
     assert compute_confidence(True, True, runtime_ok=True) == (HIGH, _REASONS[HIGH])
     assert compute_confidence(True, True, runtime_ok=True, profiled=True) == (PROFILED, _REASONS[PROFILED])
+    assert compute_confidence(True, True, compiler_mocked=True) == (MEDIUM, "hipify succeeded but compilation was mocked (mock compiler mode); runtime execution was not performed")
+    assert compute_confidence(True, False, compiler_mocked=True) == (LOW, "hipify completed but compilation failed (mock compiler mode)")
     print("validation_confidence: all assertions passed")

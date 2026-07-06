@@ -97,7 +97,7 @@ async def test_generate_markdown_report(workspace, ctx):
     
     content = report_file.read_text(encoding="utf-8")
     assert f"Migration ID**: `{migration_id}`" in content
-    assert "Status**: `SUCCESS`" in content
+    assert "Status**: `PASSED`" in content
     assert "Target GPU Architecture**: `gfx90a`" in content
     assert "Original Files Uploaded" in content
     assert "simple_kernel.cu" in content
@@ -119,7 +119,7 @@ async def test_generate_json_report(workspace, ctx):
         
     summary = data["migration_summary"]
     assert summary["migration_id"] == migration_id
-    assert summary["status"] == "SUCCESS"
+    assert summary["status"] == "PASSED"
     assert summary["target_gpu_architecture"] == "gfx90a"
     assert summary["retry_budget"] == 3
     assert summary["actual_retries"] == 1

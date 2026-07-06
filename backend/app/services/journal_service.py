@@ -102,7 +102,7 @@ async def write_state_journal_entry(context: Any) -> None:
 
     compiler_result = "N/A"
     if context.current_state == "COMPILING":
-        compiler_result = "SUCCESS" if context.compilation_success else "FAILED"
+        compiler_result = "PASSED" if context.compilation_success else "FAILED"
 
     analysis_summary = None
     if context.analysis_result:

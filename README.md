@@ -42,7 +42,7 @@ By combining deterministic tools (`hipify-clang`, `hipcc`) with specialized [Fir
 
 ```bash
 git clone https://github.com/TMXDev/Hipforge.git
-cd HIPForge
+cd Hipforge
 cp .env.example .env             # PowerShell: Copy-Item .env.example .env
 docker compose up --build -d
 docker compose ps                # confirm all 4 containers are running
