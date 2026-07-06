@@ -57,7 +57,7 @@ The generated report will include the following sections:
 ## 1. Migration Summary
 
 - **Migration ID**: Unique identifier for the migration session.
-- **Status**: `SUCCESS`, `FAILED`, `CANCELLED`.
+- **Status**: `PASSED`, `FAILED`, `CANCELLED`.
 - **Start Time**: Timestamp of when the migration began.
 - **End Time**: Timestamp of when the migration completed or failed.
 - **Duration**: Total time taken for the migration.

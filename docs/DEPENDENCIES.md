@@ -4,136 +4,55 @@ This document details the dependencies, environment configurations, and setup pr
 
 ---
 
-## Quick Dependency Table
+## 1. Quick Dependency Table
 
-| Dependency | Required Version / Source | Required For | Notes |
+| Dependency | Scope | Required For | Provided By |
 | :--- | :--- | :--- | :--- |
-| **Python** | `>=3.10` | All Modes | Powers the FastAPI backend, CLI doctor tools, and agent execution. |
-| **Node.js** | `>=20` | Frontend UI | Builds and runs the Next.js React user interface. |
-| **Redis** | `redis:7-alpine` | All Modes | Used for shared state management and real-time WebSocket communication. |
-| **Docker & Compose**| Modern Engine / CLI | All Docker Modes | Orchestrates the multi-container stack and isolation sandbox. |
-| **gVisor (`runsc`)**| Compatible runtime | Production Sandbox| Provides secure sandbox isolation. (Can fallback to default docker runtime). |
-| **ROCm Toolchain** | `rocm/dev-ubuntu-22.04` | Real Compile Mode | Contains AMD HIP SDK tools like `hipcc` and `hipify-clang`. |
-| **CUDA Toolkit** | `nvidia-cuda-toolkit` | Real Compile Mode | Essential for `hipify-clang` AST parsing compatibility. |
-| **Fireworks AI API** | Developer Key | AI Repair (Real) | DeepSeek Flash model or similar, used to fix compilation errors. |
+| **Docker Desktop / Engine** | System | Container orchestration and isolated compilation sandbox. | User (Host System) |
+| **Docker Compose v2** | System | Building and launching multi-container stacks. | User (Host System) |
+| **Git** | Development | Cloning repositories. | User (Host System) |
+| **Fireworks AI API Key** | Integration | Dynamic AI self-healing agent queries (Real AI mode only). | User (Credentials) |
+| **Python 3.10+** | Host (Optional) | Running CLI scripts or backend tests locally on the host machine. | User (Host System) / Docker internally |
+| **Node.js 18+ & npm** | Host (Optional) | Running frontend UI development server locally on the host. | User (Host System) / Docker internally |
+| **ROCm Toolchain** | Sandbox | Translating and compiling code (`hipcc`, `hipify-clang`). | Sandbox image (`Dockerfile.sandbox`) |
+| **CUDA Toolkit** | Sandbox | AST parser compatibility (`cuda_runtime.h`). | Sandbox image (`Dockerfile.sandbox`) |
+| **Redis 7** | Infrastructure | Shared state caching and queue broker. | Redis container (`redis:7-alpine`) |
+
+> [!NOTE]
+> **No Host installation required**: You do **NOT** need to manually install Python, Node.js, Redis, ROCm, or CUDA tools on your host machine to run HIPForge. The standard `docker compose up` stack packages all backend, worker, frontend, compiler, and Redis environments internally.
 
 ---
 
-## Compiler and Validation Modes
+## 2. Compiler Sandbox Configuration
 
-### 1. Mock Demo Mode (Default / Offline)
-* **Description**: Runs entirely on simulated compiler and AI interfaces. Ideal for evaluating the frontend, backend state machine, and basic workflow without local GPU hardware, Docker containers, or live API credentials.
-* **Requirements**:
-  * Python `>=3.10` and Node.js `>=20` on the host machine.
-  * `.env` configured with:
-    ```env
-    USE_MOCK_COMPILER=true
-    USE_MOCK_AI=true
-    ```
-  * No GPU hardware, Docker daemon, or ROCm SDK is required.
+To perform compile-validation without faking outputs (`USE_MOCK_COMPILER=false`), you must build the sandbox Docker image on the host:
 
-### 2. Compile-Validated Real Mode
-* **Description**: Translates CUDA code to HIP and validates structural correctness by running the actual compilers (`hipify-clang` and `hipcc`) inside isolated sandbox Docker containers.
-* **Requirements**:
-  * Running Docker daemon.
-  * Host Docker socket access (`/var/run/docker.sock` mounted).
-  * The sandbox Docker image must be built locally:
-    ```bash
-    docker build -t hipforge-sandbox:latest -f Dockerfile.sandbox .
-    ```
-  * `.env` configured with:
-    ```env
-    USE_MOCK_COMPILER=false
-    HIPFORGE_SANDBOX_IMAGE=hipforge-sandbox:latest
-    ALLOW_RUNSC_FALLBACK=true # Set to false only if gVisor (runsc) is installed
-    ```
-  * **CUDA Toolkit Requirement**: Because `hipify-clang` relies on CUDA header AST parsing, `nvidia-cuda-toolkit` must be present inside the sandbox image to provide `cuda_runtime.h` and `libdevice.bc` files. (This is pre-configured in `Dockerfile.sandbox`).
+```bash
+docker build -t hipforge-sandbox:latest -f Dockerfile.sandbox .
+```
 
-### 3. AMD GPU Runtime Validation (Future / Optional)
-* **Description**: Validates translated HIP binaries by running them directly on an AMD GPU.
-* **Requirements**:
-  * Host system containing a supported AMD GPU (e.g. CDNA/RDNA family).
-  * ROCm kernel drivers active on the host.
-  * Docker containers launched with GPU access flags (e.g. `--device=/dev/kfd --device=/dev/dri` and suitable capabilities).
-  * **Status**: **Disabled by default in `v0`.** `v0` supports compile-validated migration out of the box; runtime GPU execution is a future capability.
+Verify that the tools are available within the image:
 
-### 4. Profiling (`rocprof`)
-* **Description**: Gathers performance metrics of translated HIP code.
-* **Requirements**:
-  * Active AMD GPU runtime environment.
-  * ROCm profiling tools (`rocprof` / `rocprofv2` or `rocprofiler`) installed inside the sandbox/container.
-  * **Status**: **Optional / future feature.**
+```bash
+docker run --rm hipforge-sandbox:latest hipify-clang --version
+docker run --rm hipforge-sandbox:latest hipcc --version
+```
+
+If these tools execute successfully, the migration worker will be able to perform compile validation.
 
 ---
 
-## Environment Variables Configuration
+## 3. Environment Variables reference
 
-Configure these in a `.env` file at the project root.
+Define these variables in your local `.env` file:
 
-| Environment Variable | Default Value | Description |
+| Variable | Default Value | Description |
 | :--- | :--- | :--- |
-| `REDIS_URL` | `redis://localhost:4444?protocol=2` | Connection URL for Redis. |
-| `WORKSPACE_PATH` | `workspace` | Directory for storing input and generated files in the container. |
-| `WORKSPACE_SIZE_LIMIT` | `100MB` | Maximum size limit for uploaded source workspaces. |
-| `DEFAULT_RETRY_BUDGET` | `5` | Compilation repair attempt budget before marking a migration as failed. |
-| `LOG_LEVEL` | `INFO` | Console logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
-| `NEXT_PUBLIC_BACKEND_URL`| `http://localhost:8000` | Frontend backend API endpoint. |
-| `FIREWORKS_API_KEY` | `CHANGE_ME` | API Key for accessing Fireworks AI models. |
-| `FIREWORKS_MODEL` | `accounts/fireworks/models/deepseek-v4-flash` | Selected AI LLM model. |
-| `USE_MOCK_AI` | `false` | Set to `true` to use mock offline AI clients. |
-| `USE_MOCK_COMPILER` | `false` | Set to `true` to use mock compiler/sandbox execution. |
-| `HIPFORGE_SANDBOX_IMAGE` | `hipforge-sandbox:latest` | Target Docker image name used for sandboxed compilation. |
-| `HIP_VISIBLE_DEVICES` | `0` | Exposed AMD GPU device ID. |
-| `HOST_WORKSPACE_PATH` | *Current folder path* | Host workspace absolute path mapping for nested container mounting. |
-| `DISABLE_COMPILER_CACHE` | `true` | Set to `false` to enable compilation caching. |
-| `ALLOW_RUNSC_FALLBACK` | `true` | Allow Docker default runtime if gVisor `runsc` is not present. |
-| `REQUIRE_HOST_HIPIFY` | `false` | Require host-level `hipify-clang` instead of sandbox fallback. |
-
----
-
-## Sandbox and Docker Sanity Commands
-
-Use these commands to verify, debug, and monitor the HIPForge Docker environment:
-
-### 1. Docker Compose Sanity
-Verify compose syntax and environment variable interpolation:
-```bash
-docker compose config
-```
-
-### 2. Build and Start Services
-Rebuild application images and spin up the backend, frontend, and Redis services:
-```bash
-docker compose up --build -d
-```
-
-### 3. Preflight Diagnostics
-Run the preflight health checker tool to inspect Docker, sandbox images, and environment variables:
-```bash
-python cli/hipforge.py doctor
-```
-For verbose output showing individual check statuses:
-```bash
-python cli/hipforge.py doctor --verbose
-```
-
-### 4. Run Mock-Mode Tests
-Execute the test suite in mock mode (no compiler required):
-```bash
-$env:PYTHONPATH="backend;."
-python -m pytest
-```
-
-### 5. Run Real Compiler E2E Tests
-Execute E2E validation against the real compiler sandbox (requires active Docker and `hipforge-sandbox:latest` image):
-```bash
-python -m pytest -m e2e_real -s -vv
-```
-
----
-
-## Known Limitations
-
-1. **Windows Platform Support**: Host-level compilation is not supported on Windows. The compiler tools (`hipcc` and `hipify-clang`) must be executed via sandboxed Docker containers on Windows hosts.
-2. **CUDA Headers Dependency**: Even though target binaries run on AMD hardware, the parser tool (`hipify-clang`) requires standard CUDA headers (`cuda_runtime.h`) and `libdevice` files to compile-check and validate source code AST. These are installed in the container environment rather than the host system.
-3. **gVisor Availability**: gVisor is not natively supported on Docker Desktop for Windows/macOS. Setting `ALLOW_RUNSC_FALLBACK=true` allows tests to fallback to standard container runtime on these environments.
+| `REDIS_URL` | `redis://redis:6379` | Redis connection endpoint inside compose network. |
+| `USE_MOCK_COMPILER` | `true` | Set to `false` to invoke sandbox compile-validation. |
+| `USE_MOCK_AI` | `true` | Set to `false` to use live Fireworks AI agents. |
+| `FIREWORKS_API_KEY` | `CHANGE_ME` | API Key used when `USE_MOCK_AI=false`. |
+| `RUNTIME_VALIDATION_ENABLED` | `false` | Disabled by default in v0. Set to `false`. |
+| `TIMEOUT_COMPILE` | `60` | Compile execution timeout in seconds. |
+| `MAX_CUDA_FILES_FOR_AUTO_MIGRATION` | `20` | Preflight upload limit for CUDA source files. |
+| `MAX_TOTAL_FILES_FOR_AUTO_MIGRATION`| `1000` | Preflight upload limit for total workspace files. |

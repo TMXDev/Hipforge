@@ -1,142 +1,68 @@
-# HIPForge Demo Readiness Notes
+# HIPForge Demo Guide
 
-Last verified: 2026-07-05
-
-This document outlines the status and steps to run the HIPForge demo.
-
-> [!IMPORTANT]
-> **Honest Demo Status:**
-> * **v0 is Compile-Validated by Default:** Today, HIPForge verifies translation correctness by checking if the generated HIP code builds successfully using the target compiler (`hipcc`).
-> * **Runtime AMD GPU Validation is Optional/Future:** Running the translated binaries on physical AMD GPU hardware is currently disabled by default and marked for future releases. We do not claim runtime-verified migration.
-> * **Dependencies**: See the detailed [DEPENDENCIES.md](file:///C:/Users/Yassi/Downloads/HIPForge/docs/DEPENDENCIES.md) for environment configuration and pre-flight commands.
-> * **Recommended Demo Path:** It is highly recommended to run the demo via the **bare-metal** path rather than Docker Compose unless you have verified all network and volume configurations on your local setup.
+This guide details how to demo the HIPForge platform, explain the results truthfully, and avoid mock compiler confusion.
 
 ---
 
-## 1. Environment Verification (`hipforge doctor`)
+## 1. What the Demo Proves (And Does Not Prove)
 
-Before starting, check your environment health using the doctor tool:
+### What the Demo PROVES:
+* **Orchestration & State Machine**: Demonstrates the deterministic transitions of the Workflow Engine (`PREFLIGHT` -> `HIPIFY` -> `SCA` -> `COMPILING` -> `ANALYZING` -> `PATCHING` -> `GENERATING_REPORT`).
+* **Live Status Streaming**: Proves that progress events and compiler log streams are relayed live via Redis Pub/Sub to WebSockets and displayed on client screens.
+* **Deterministic Translation & Post-Fixes**: Demonstrates `hipify-clang` conversion and secondary AST search-and-replace mappings (e.g. `cudaMalloc` -> `hipMalloc`).
+* **AI Self-Healing Loop**: Proves that Fireworks AI agents successfully parse compiler errors, isolate code snippets, generate correct syntax edits, and post-process them with launcher safety guards.
+* **Structured Packaging**: Demonstrates report packaging into `exports/HIPForge_Migration.zip` containing change lists, git diff patches, compile logs, and lifecycle tracking.
 
-```bash
-python cli/hipforge.py doctor
-```
-
-In mock mode (recommended for pitch demos), this checks dependencies and connectivity. In real mode, it checks for physical AMD GPU dependencies.
-
-### Dependency-Error Path
-
-If critical dependencies (like `hipcc`, CUDA/ROCm runtimes) are missing, `hipforge doctor` will fail and print detailed warnings:
-
-```text
-Missing Components
-  [X] ROCm SDK (hipcc)
-  [X] cuda_runtime.h
-  [X] libdevice
-```
-
-To run a safe demo without these dependencies, switch to Mock Mode by setting the following in your `.env` file:
-
-```env
-USE_MOCK_AI=true
-USE_MOCK_COMPILER=true
-```
+### What the Demo DOES NOT Prove:
+* **Runtime Verification**: The v0 pipeline is a **compile-validation** prototype. It does not execute generated binaries on AMD GPUs by default. Do **not** claim runtime verification.
+* **Production Readiness**: HIPForge is a development tool targeting compilation. It does not guarantee that migrated binaries are ready for production deployments.
 
 ---
 
-## 2. Recommended Demo Path (Bare-Metal)
+## 2. Setting Up the Demo (Avoiding Mock Confusion)
 
-Since Docker Compose setups can hide network or environment edge cases, bare-metal startup is recommended:
+To ensure the audience understands whether the run is simulated or validated, explain the two configurations:
 
-### Step 1: Start Redis
-Ensure Redis is running (e.g., via Docker or locally on port 4444):
-```bash
-docker compose up -d redis
-```
-
-### Step 2: Configure Environment
-Copy `.env.example` to `.env` and set:
-```env
-REDIS_URL=redis://localhost:4444
-NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
-USE_MOCK_AI=true
-USE_MOCK_COMPILER=true
-```
-
-### Step 3: Run Backend Service
-From the root workspace, run the following to start the backend:
-```bash
-$env:PYTHONPATH="backend;."
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-### Step 4: Run Migration Worker
-In another shell, start the background worker:
-```bash
-$env:PYTHONPATH="backend;."
-python -m app.workers.migration_worker
-```
-
-### Step 5: Start Frontend
-From the `frontend` directory:
-```bash
-npm run dev
-```
-Access the application at `http://localhost:3000`.
+### Configuration Toggles (`.env`):
+* **Mock Mode (Simulated Run)**:
+  * Set `USE_MOCK_COMPILER=true` and `USE_MOCK_AI=true`.
+  * Runs instantly on any machine. Ideal for demonstrating UI flow and WebSocket streams without Fireworks keys or ROCm toolchain installations.
+  * **Note**: Make it clear to the audience that this run is a simulation and does not invoke real compiler validation.
+* **Real Mode (Validated Run)**:
+  * Set `USE_MOCK_COMPILER=false` and `USE_MOCK_AI=false`.
+  * Requires building the sandbox image (`Dockerfile.sandbox`) and providing a `FIREWORKS_API_KEY`.
+  * Invokes the real AMD compilation toolchain.
 
 ---
 
-## 3. CLI Happy Path
+## 3. Recommended Demo Walkthrough
 
-You can also run migrations directly via the CLI:
-
+### Step 1: Pre-flight Diagnostic
+Run the environment doctor check to prove the stack is operational:
 ```bash
-python cli/hipforge.py migrate <path_to_cuda_file_or_directory> --output <output_directory> --arch gfx90a
+docker compose exec backend python cli/hipforge.py doctor --verbose
 ```
 
-Example command:
-```bash
-python cli/hipforge.py migrate workspace/input/kernel.cu --output workspace/output --arch gfx90a
-```
+### Step 2: Upload and Migration
+1. Open the Web UI at [http://localhost:3000](http://localhost:3000) and navigate to **Upload**.
+2. Select a target architecture (e.g. `gfx942`).
+3. Upload a small CUDA file. **Recommended sample**: A single CUDA kernel file containing a syntax error (e.g. an unmapped CUDA keyword or a standard compilation bug) to force the self-healing loop.
+   > [!WARNING]
+   > Do **NOT** upload the entire `cuda-samples` repository. HIPForge limits input file counts to 20 and extracted archives to 50MB to guarantee fast processing times. Large uploads will trigger the size preflight guard and abort.
+4. Click **Start Migration**. Watch the live timeline logs update.
 
-This command submits the migration job to the backend, streams live logs, and saves the translated files once the compile-validation is complete.
-
----
-
-## 4. Manual Web UI Checklist
-
-If browser testing cannot be automated, follow this checklist to verify frontend readiness:
-
-1. Open `http://localhost:3000/upload` in your web browser.
-2. Select a target AMD GPU architecture (e.g., `gfx90a`).
-3. Upload a sample `.cu` (CUDA) file or paste its code in the editor.
-4. Click **Start Migration**.
-5. You will be redirected to the dashboard page (`/migration/<id>`).
-6. Observe the progress timeline, active steps, and compilation logs.
-7. Confirm that the status updates to `COMPLETED` and the final translated report page renders.
+### Step 3: Inspect the Final Report
+Once the status changes to `COMPLETED` (or `FAILED` if the retry budget is exhausted), open the report:
+* **Validation Confidence**: Explain the ladder (`LOW` = compile failed; `MEDIUM` = compile passed but no runtime execution; `HIGH`/`PROFILED` = runtime verification on AMD hardware, not used in v0). In real mode, a compile-success job results in a `MEDIUM` confidence level.
+* **Launcher Safety Guards**: Point out that the patched code under `generated/` includes safety modifications inserted during validation (nullptr pointer checks, `N <= 0` size guards, and `hipGetLastError()` launch checks).
+* **Provenance Comments**: Note the comments prepended to the final code (e.g. `// Generated by HIPForge (AI repaired)`).
+* **Git Patch Diff**: Open `reports/git_patch.diff` to show the clean code modifications.
+* **File Lifecycle**: Review the file-by-file status list showing individual translation outcomes and hashes.
 
 ---
 
-## 5. Validation Confidence
+## 4. Explaining AMD Instinct and Fireworks Usage
 
-At the end of a migration, HIPForge displays a **Validation Confidence** score (High, Medium, Low) based on:
-1. **Compilation Success:** Whether the translated code successfully built with `hipcc`.
-2. **Static Analysis (SCA):** Detection of CUDA-specific APIs or patterns that were not fully mapped or could cause runtime performance variance.
-3. **AI Confidence:** Log-probabilities of translation confidence returned from the translation LLM.
-
-This score informs the user of how much manual revision may be required before the code is ready for real AMD GPU deployment.
-
----
-
-## 6. Migration Limits & Scope
-
-To ensure fast feedback loops and prevent hangs or excessive resource usage on large/nested projects, HIPForge enforces strict migration limits during preflight checks:
-
-* **Scope**: Optimized for single-project or single-file migrations. Uploading large multi-project source repositories (such as the entire `cuda-samples` repository as a single ZIP) is not supported.
-* **Limits & Thresholds**:
-  * **CUDA Source Files Limit**: Maximum of `20` `.cu`/`.cuh` files.
-  * **Total Files Limit**: Maximum of `1000` total files in the upload.
-  * **Extracted ZIP Size Limit**: Maximum of `50 MB`.
-  * **Archive ZIP Size Limit**: Maximum of the configured workspace size limit (default `100 MB`).
-* **Preflight Abort**: If any of these limits are exceeded, HIPForge will abort early with a `PROJECT_TOO_LARGE` status, skip AI repair cycles, and list candidate subdirectory paths containing `.cu` files so you can target and upload them individually.
-* **Stage Timing**: Stage durations are recorded for each migration phase (Preparing, Preflight, Hipify, Compiling, Analyzing, Patching, Generating Report) and saved in the JSON/Markdown reports to help trace bottlenecks.
-* **AI Context Size Limit**: A maximum prompt context size of `50,000` characters is enforced. Large files, long compile logs, or verbose history are safely truncated to ensure fast LLM responses and prevent hangs.
+During the presentation, explain the AMD integration path:
+1. **Model Inference**: All AI decisions, repair plans, and patching operations are performed by agents calling Fireworks AI. These requests run inference on **AMD Instinct™ GPU infrastructure** (MI300X accelerators).
+2. **Target Compilation**: The code generated by the tool is compiled using `hipcc` targeting AMD architecture platforms like `gfx90a` and `gfx942`.
