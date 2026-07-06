@@ -27,10 +27,9 @@ Before starting, ensure your machine has the following tools installed:
 Clone the project repository and navigate to the project root:
 
 ```bash
-git clone <PUBLIC_REPO_URL>
+git clone https://github.com/TMXDev/Hipforge.git
 cd HIPForge
 ```
-*(Replace `<PUBLIC_REPO_URL>` with the final repository URL).*
 
 ---
 

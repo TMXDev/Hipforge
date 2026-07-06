@@ -1,6 +1,6 @@
-# 🚀 HIPForge: AI-Powered CUDA to ROCm Migration Platform
+# 🚀 HIPForge: AI-Orchestrated CUDA to AMD HIP Migration
 
-HIPForge is a self-healing, AI-orchestrated migration assistant built to automate the translation, compilation, and error-repair of NVIDIA CUDA GPU code to AMD HIP/ROCm code.
+HIPForge is a self-healing, AI-orchestrated migration platform designed to automate the translation, compilation, and error-repair of NVIDIA CUDA GPU code to AMD HIP/ROCm code.
 
 By combining deterministic tools (`hipify-clang`, `hipcc`) with specialized Fireworks AI agents (Analysis, Patch, and Research), HIPForge automates the "last 30%" of migration debugging that standard compile-time translation tools leave behind.
 
@@ -12,64 +12,20 @@ By combining deterministic tools (`hipify-clang`, `hipcc`) with specialized Fire
 
 ---
 
-## 📢 AMD Track 3 Submission & Reality
+## ⚡ 5-Line Quick Start
 
-HIPForge is fully optimized and submission-ready for the **LabLab.ai AMD Track 3** hackathon.
+Deploy the complete container stack (Redis, Backend API, worker, and Web UI) in under 60 seconds:
 
-### 📌 Track 3 Submission Requirements
-* **No Docker Image Required**: AMD Track 3 does not require a submitted Docker image (GitHub repository URL, demo video, and slide deck PDF are the primary requirements).
-* **Reproducible Environment**: HIPForge includes complete Docker Compose support for easy, reproducible setup.
-* **Fast Container Startup**: Default Docker Compose services are fully containerized with pre-installed dependencies. Startup is instantaneous and takes **under 60 seconds**, requiring no live package installations at runtime.
-* **Linux/amd64 Support**: If a container image is built or submitted, it targets the standard `linux/amd64` architecture.
-
----
-
-## ⚡ AMD Compute & ROCm Proof
-
-HIPForge demonstrates native AMD compute integration through a dual-path pipeline:
-
-### 1. Fireworks AI on AMD Instinct Infrastructure
-* **Agentic Workflows**: All analysis, repair, and research agent queries run via the **Fireworks AI Inference Platform**.
-* **AMD Partnership**: Fireworks AI runs its model endpoints on high-performance **AMD Instinct™ GPU infrastructure** (such as MI300X accelerators), providing direct, AMD-accelerated LLM inference.
-
-### 2. ROCm / HIP Target Compilation
-* **Target Architectures**: HIPForge automates targeting AMD CDNA/RDNA architectures. Supported and tested target offload architectures include `gfx90a` (MI210/MI250), `gfx941`, and `gfx942` (MI300 series).
-* **Compiler Logs & Commands**: Compilation reports record the exact compiler commands executed in the sandboxed build, showing target parameters such as:
-  ```bash
-  hipcc --offload-arch=gfx942 -c main.hip -o main.o
-  ```
-* **Validation Confidence Ladder (`v0`)**:
-  * **LOW**: Translation completed, but `hipcc` compilation failed.
-  * **MEDIUM (Default Demo Path)**: Translation and `hipcc` compilation passed successfully, compile-validated. This path is hardware-agnostic and does not require local AMD GPU hardware to demonstrate.
-  * **HIGH**: Translation, compilation, and runtime validation succeeded on physical AMD GPU hardware (optional/future).
-  * **PROFILED**: Runtime validation passed, and compute efficiency profiling data (`rocprof`) was collected (optional/future).
-
----
-
-## 📊 Slide Deck Outline: "AMD Compute / ROCm Usage"
-
-Below is the structured content for the required AMD Compute slide in the submission deck:
-
-* **Fireworks AI Agents**: Analysis, Patch, and Research agents run via Fireworks inference platform.
-* **AMD Instinct Infrastructure**: Powered by the Fireworks AI and AMD Instinct MI300 series GPU hardware partnership.
-* **CUDA-to-HIP Migration**: Translates CUDA APIs and compiles using `hipcc`.
-* **Target Compilation**: Explicit target support for AMD Instinct architectures, including `gfx90a` and `gfx942`.
-* **Validation Confidence Ladder**: Outlines compile-validated `v0` migrations (Medium confidence) with optional runtime validation (High confidence) on physical GPU hardware.
-
----
-
-## 📋 Track 3 Submission Checklist
-
-Before submitting to LabLab.ai, ensure the following checklist is completed:
-
-- [x] **GitHub Repository**: Repository is public and includes this README.
-- [x] **Safe Environment**: `.env` is not committed; `.env.example` is present with safe placeholders (`FIREWORKS_API_KEY=CHANGE_ME`).
-- [x] **AMD Compute Slide**: Included in the presentation slide deck.
-- [x] **Demo Video**: Recorded showing the Web UI/CLI migration and self-healing loop.
-- [x] **No Docker Image Required**: Wording updated to clarify Track 3 Docker reality.
-- [x] **Quick Startup**: Verified that `docker compose up --build` starts in under 60 seconds with no runtime package downloads.
-- [x] **Clean Workspace**: No large binary assets (e.g. `cuda-samples.zip`) are committed.
-- [x] **Sample Projects**: Demo uses a small test folder instead of a heavy monorepo.
+```bash
+git clone https://github.com/TMXDev/Hipforge.git
+cd HIPForge
+cp .env.example .env             # (PowerShell: Copy-Item .env.example .env)
+docker compose up --build -d
+docker compose ps
+```
+* **Web UI**: Access at [http://localhost:3000](http://localhost:3000)
+* **Backend Docs (Swagger)**: Access at [http://localhost:8000/docs](http://localhost:8000/docs)
+* **Health Check**: `curl http://localhost:8000/api/v1/health/check`
 
 ---
 
@@ -120,25 +76,35 @@ graph TD
 
 ---
 
-## ⚙️ Configuration & Quick Setup
+## ⚡ AMD Compute & ROCm Proof
 
-### ⚡ 5-Line Quick Start
-```bash
-git clone <PUBLIC_REPO_URL>
-cd HIPForge
-cp .env.example .env             # (PowerShell: Copy-Item .env.example .env)
-docker compose up --build -d
-docker compose ps
-```
+HIPForge demonstrates native AMD compute integration through a dual-path pipeline:
 
-### 📖 Platform Documentation & Runbooks
-* **[Fresh Machine Runbook (docs/FRESH_MACHINE_RUNBOOK.md)](file:///C:/Users/Yassi/Downloads/HIPForge/docs/FRESH_MACHINE_RUNBOOK.md)**: Zero-configuration copy-pasteable guide from Git clone to E2E tests, CLI migrations, and real compiler validation checks.
-* **[Environment Dependencies (docs/DEPENDENCIES.md)](file:///C:/Users/Yassi/Downloads/HIPForge/docs/DEPENDENCIES.md)**: Details on physical ROCm host prerequisites, docker sandboxing, and manual setup guides.
-* **[Demo Execution Guide (README_DEMO.md)](file:///C:/Users/Yassi/Downloads/HIPForge/README_DEMO.md)**: Walkthroughs, UI checklists, validation confidence score breakdown, and size limits.
+### 1. Fireworks AI on AMD Instinct Infrastructure
+* **Agentic Workflows**: All analysis, repair, and research agent queries run via the **Fireworks AI Inference Platform**.
+* **AMD Partnership**: Fireworks AI runs its model endpoints on high-performance **AMD Instinct™ GPU infrastructure** (such as MI300X accelerators), providing direct, AMD-accelerated LLM inference.
+
+### 2. ROCm / HIP Target Compilation
+* **Target Architectures**: HIPForge automates targeting AMD CDNA/RDNA architectures. Supported and tested target offload architectures include `gfx90a` (MI210/MI250), `gfx941`, and `gfx942` (MI300 series).
+* **Compiler Logs & Commands**: Compilation reports record the exact compiler commands executed in the sandboxed build, showing target parameters such as:
+  ```bash
+  hipcc --offload-arch=gfx942 -c main.hip -o main.o
+  ```
 
 ---
 
-## 🧪 Running Tests
+## 📋 Track 3 Submission Checklist
+
+- [x] **GitHub Repository**: Repository is public ([https://github.com/TMXDev/Hipforge.git](https://github.com/TMXDev/Hipforge.git)).
+- [x] **Safe Environment**: `.env` is not committed; `.env.example` is present with safe placeholders.
+- [x] **AMD Compute Slide**: Included in the presentation slide deck.
+- [x] **Demo Video**: Recorded showing the Web UI/CLI migration and self-healing loop.
+- [x] **Quick Startup**: Verified that `docker compose up --build` starts in under 60 seconds.
+- [x] **Sample Projects**: Demo uses a small test folder instead of a heavy monorepo.
+
+---
+
+## 🧪 Running Tests Locally
 
 Verify correctness by running the Python pytest suite:
 ```powershell

@@ -118,7 +118,7 @@ export default function HomePage() {
 
             {/* Secondary link */}
             <a
-              href="https://github.com"
+              href="https://github.com/TMXDev/Hipforge"
               target="_blank"
               rel="noopener noreferrer"
               className="group relative text-xs font-medium tracking-[0.2em] uppercase text-themeTextMuted transition-colors duration-500 hover:text-themeText"
