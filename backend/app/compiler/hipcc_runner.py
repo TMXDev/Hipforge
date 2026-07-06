@@ -282,7 +282,8 @@ class HipccRunner:
             else:
                 compile_sources = [source_path]
 
-            cmd = ["hipcc", *compile_sources]
+            # ponytail: added -Werror to trigger self-healing on warnings to ensure code cleanliness
+            cmd = ["hipcc", "-Werror", *compile_sources]
             for include_dir in include_dirs:
                 cmd.extend(["-I", include_dir])
             cmd.extend(["-o", output_path])
