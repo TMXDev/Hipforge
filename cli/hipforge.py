@@ -270,16 +270,48 @@ async def stream_logs(host_url: str, migration_id: str):
                     
                     m_type = data.get("type")
                     if m_type in ("status", "event"):
-                        status = data.get("status")
-                        stage = data.get("stage", status)
+                        status = (data.get("status") or "").lower()
+                        stage = (data.get("stage") or status).upper()
                         msg = data.get("message", "")
-                        print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage}{Colors.ENDC}")
+                        
+                        # ponytail: track elapsed time and seen stages
+                        if not hasattr(asyncio.current_task(), "seen_stages"):
+                            asyncio.current_task().seen_stages = set()
+                            asyncio.current_task().stage_start_times = {}
+                            
+                        seen = asyncio.current_task().seen_stages
+                        starts = asyncio.current_task().stage_start_times
+                        
+                        seen.add(stage)
+                        
+                        elapsed = ""
+                        if status == "started":
+                            import time
+                            starts[stage] = time.time()
+                            print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage} (Started){Colors.ENDC}")
+                        elif status in ("completed", "failed"):
+                            import time
+                            if stage in starts:
+                                elapsed_sec = round(time.time() - starts[stage], 2)
+                                elapsed = f" ({elapsed_sec}s)"
+                            print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage} ({status.capitalize()}{elapsed}){Colors.ENDC}")
+                        else:
+                            print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage}{Colors.ENDC}")
+                            
                         draw_stage_pipeline(stage)
                         print() # New line after the pipeline draw
                         if msg:
-                            print(f"  {Colors.GREEN}{msg}{Colors.ENDC}")
+                            if status == "failed":
+                                print(f"  {Colors.FAIL}{msg}{Colors.ENDC}")
+                            else:
+                                print(f"  {Colors.GREEN}{msg}{Colors.ENDC}")
+                                
+                        if stage == "GENERATING_REPORT" and status == "started":
+                            if "ANALYZING" not in seen:
+                                # We skipped AI repair!
+                                print(f"  {Colors.BOLD}{Colors.WARNING}[AI Repair] AI repair skipped.{Colors.ENDC}")
+
                         stage_upper = (stage or "").upper()
-                        status_upper = (status or "").upper()
                         if stage_upper in ("COMPLETED", "FAILED"):
                             return stage_upper
                     elif m_type in ("log", "compiler_log"):
@@ -476,6 +508,17 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
             print(f"  {Colors.BOLD}Failed Stage:{Colors.ENDC}       {failed_stage}")
         if main_error:
             print(f"  {Colors.BOLD}Main Error:{Colors.ENDC}        {main_error[:200]}")
+
+        # ponytail: print stage timings if available
+        timings = detail.get("stage_timings")
+        if timings:
+            print(f"  {Colors.BOLD}Stage Timings:{Colors.ENDC}")
+            for stage_name, stage_dur in timings.items():
+                print(f"    - {stage_name}: {stage_dur}s")
+
+        if error_category == "PROJECT_TOO_LARGE":
+            print(f"  {Colors.BOLD}Project too large:{Colors.ENDC} {Colors.FAIL}YES{Colors.ENDC}")
+            print(f"  {Colors.BOLD}Recommended Action:{Colors.ENDC} {detail.get('recommended_next_action') or 'Extract and migrate folder by folder.'}")
 
         # Did AI repair run?
         ai_events = [e for e in journal if e.get("workflow_state") in ("ANALYZING", "PATCHING", "RESEARCHING")]

@@ -405,16 +405,28 @@ The Workflow Engine stops when:
 
 ---
 
-# Validation Rules
+# Validation Rules & Confidence Levels
 
-Every compilation must verify:
+Every compilation is validated by the compiler sandbox to ensure structural correctness.
 
-- Successful translation.
-- Compiler exit code.
-- Generated binary (if applicable).
-- Fatal warnings.
-- Missing includes.
-- Unsupported APIs.
+### v0 Validation Confidence Levels
+By default, runtime validation on hardware is disabled (`compile-validated`). Migration jobs receive one of the following validation confidence scores:
+- **LOW**: The `hipify-clang` translation completed successfully, but the compiled binary fails compilation (`hipcc` fails).
+- **MEDIUM**: The `hipify-clang` translation and `hipcc` compilation succeed, but runtime execution on AMD GPU was not performed.
+- **HIGH**: The project successfully compiles, and runtime validation executes and passes on physical AMD GPU hardware (optional/future).
+- **PROFILED**: The compiled binary passes runtime validation and compute efficiency profiling data is successfully collected.
+
+### Dependency Hardening & Skip AI Repair
+If compilation fails due to:
+- Missing headers (`#include`)
+- Linker errors (`undefined reference`)
+- Missing external library dependencies
+The failure is classified as a `DEPENDENCY_ERROR`. To prevent token wastage and infinite retry loops, the Workflow Engine immediately halts/skips the AI self-healing repair loop and generates a report detailing the required user setup.
+
+### Makefile Fallback Policy
+- **User Makefiles Protection**: Existing user-uploaded Makefiles are preserved and never modified or overwritten.
+- **Fallback Makefile**: If no build system is detected, HIPForge compiles using a generated Makefile saved at `workspace/generated/Makefile.hipforge`.
+- **Multi-File Entrypoint Support**: When no build configuration is uploaded but multiple source files are provided, HIPForge scans for a valid entrypoint (e.g. `main` function) to compile all files as a single project.
 
 ---
 

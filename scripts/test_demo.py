@@ -13,9 +13,6 @@ sys.path.insert(0, "backend")
 
 # 2. Setup mock redis
 import app.redis.client
-import app.redis.manager
-import app.redis.publisher
-import app.redis.subscriber
 from app.main import app as fastapi_app
 from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine.state_machine import WorkflowEngine
@@ -188,9 +185,6 @@ async def run_demo():
     
     # 2. Setup mock redis in global modules
     app.redis.client.redis_client = mock_redis_instance
-    app.redis.manager.redis_client = mock_redis_instance
-    app.redis.publisher.redis_client = mock_redis_instance
-    app.redis.subscriber.redis_client = mock_redis_instance
 
     # 3. Patch compiler function
     original_handle_compiling = app.workflow_engine.states.handle_compiling

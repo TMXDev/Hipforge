@@ -111,6 +111,9 @@ async def handle_preparing(context: WorkflowContext) -> str:
     
     for zip_path in zip_files:
         logger.info("[PREPARING] Extracting ZIP archive: %s", zip_path)
+        # ponytail: record archive size
+        archive_size = zip_path.stat().st_size
+        context.archive_size_bytes = getattr(context, "archive_size_bytes", 0) + archive_size
         try:
             with zipfile.ZipFile(zip_path, "r") as z:
                 for info in z.infolist():
@@ -181,6 +184,65 @@ async def handle_preflight(context: WorkflowContext) -> str:
         "build_system_detected": scan.get("build_system_detected", "none"),
         "generated_makefile_fallback": scan.get("compile_strategy", "").startswith("generated_"),
     }
+
+    # ponytail: Large-project preflight guard
+    from app.config.settings import settings
+    
+    archive_size = getattr(context, "archive_size_bytes", 0)
+    extracted_size = sum(p.stat().st_size for p in input_dir.rglob("*") if p.is_file())
+    
+    cuda_files = scan.get("cu_files", []) + scan.get("cuh_files", [])
+    cuda_files_count = len(cuda_files)
+    total_files_count = scan.get("file_count", 0)
+    
+    distinct_cu_dirs = {Path(p).parent for p in scan.get("cu_files", [])}
+    independent_folders_count = len(distinct_cu_dirs)
+    
+    # Check candidates (relative paths containing CUDA files)
+    candidate_folders = []
+    for d in distinct_cu_dirs:
+        try:
+            rel = Path(d).relative_to(input_dir)
+            if str(rel) and str(rel) != ".":
+                candidate_folders.append(str(rel))
+        except ValueError:
+            candidate_folders.append(str(d))
+            
+    is_cuda_samples_layout = (independent_folders_count > 5) or any("samples" in Path(d).name.lower() or "0_simple" in Path(d).name.lower() for d in distinct_cu_dirs)
+    
+    too_large = False
+    large_reasons = []
+    
+    if archive_size > settings.max_upload_bytes:
+        too_large = True
+        large_reasons.append(f"archive size {archive_size} bytes exceeds limit of {settings.max_upload_bytes} bytes")
+    if extracted_size > settings.MAX_EXTRACTED_BYTES_FOR_AUTO_MIGRATION:
+        too_large = True
+        large_reasons.append(f"extracted size {extracted_size} bytes exceeds limit of {settings.MAX_EXTRACTED_BYTES_FOR_AUTO_MIGRATION} bytes")
+    if cuda_files_count > settings.MAX_CUDA_FILES_FOR_AUTO_MIGRATION:
+        too_large = True
+        large_reasons.append(f"number of CUDA files ({cuda_files_count}) exceeds limit of {settings.MAX_CUDA_FILES_FOR_AUTO_MIGRATION}")
+    if total_files_count > settings.MAX_TOTAL_FILES_FOR_AUTO_MIGRATION:
+        too_large = True
+        large_reasons.append(f"number of total files ({total_files_count}) exceeds limit of {settings.MAX_TOTAL_FILES_FOR_AUTO_MIGRATION}")
+    if is_cuda_samples_layout:
+        too_large = True
+        large_reasons.append(f"cuda-samples style layout detected with {independent_folders_count} likely independent project folders")
+        
+    if too_large:
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = "PROJECT_TOO_LARGE"
+        reason_msg = f"Project is too large to auto-migrate. Reasons: {', '.join(large_reasons)}."
+        context.failure_reason = reason_msg
+        context.last_compile_stderr = reason_msg
+        
+        action = "Extract the archive and migrate one CUDA sample/project folder at a time."
+        if candidate_folders:
+            action += f" Candidate folders containing .cu files: {', '.join(candidate_folders)}."
+        context.recommended_next_action = action
+        logger.error("[PREFLIGHT] Guard triggered: %s %s", reason_msg, action)
+        raise RuntimeError(reason_msg)
 
     summary = project_summary_line(scan)
     logger.info("[PREFLIGHT] %s", summary)
@@ -449,6 +511,14 @@ async def handle_hipify(context: WorkflowContext) -> str:
         if not result["success"]:
             error_detail = result.get("stderr") or "hipify-clang returned failure"
             logger.error("[HIPIFY] Translation failed on %s: %s", src, error_detail)
+            # ponytail: handle hipify timeout
+            if result.get("timeout"):
+                from app.config.settings import settings
+                context.infrastructure_error = True
+                context.compilation_success = False
+                context.error_category = "TIMEOUT_ERROR"
+                context.failure_reason = error_detail
+                context.recommended_next_action = f"The hipify stage timed out after {settings.TIMEOUT_HIPIFY} seconds. Reduce the number of source files or split the project."
             raise RuntimeError(f"HIPIFY failed on {src.name}: {error_detail}")
             
         if primary_output_path is None:
@@ -873,27 +943,35 @@ async def handle_compiling(context: WorkflowContext) -> str:
     # Check for infrastructure/system compilation failures to prevent calling AI agents
     if not comp_ok:
         from app.compiler.error_parser import classify_compiler_error
-        category = classify_compiler_error(last_stderr)
-        context.error_category = category
-        if category not in {"USER_CODE_ERROR", "UNSUPPORTED_FEATURE", "COMPILATION_ERROR"}:
-            logger.error("[COMPILING] Non-code compile error detected: %s. Aborting to report generation.", category)
+        is_timeout = "timed out" in last_stderr.lower() or any(getattr(e, "code", "") == "TIMEOUT" for e in compiler_errors)
+        if is_timeout:
             context.infrastructure_error = True
-            is_missing_dep = (
-                category == "DEPENDENCY_ERROR"
-                or "undefined symbol" in last_stderr.lower()
-                or "undefined reference" in last_stderr.lower()
-                or "cannot find" in last_stderr.lower()
-                or "no such file" in last_stderr.lower()
-            )
-            if is_missing_dep:
-                context.error_category = "DEPENDENCY_ERROR"
-                from app.compiler.error_parser import extract_missing_symbol
-                missing = extract_missing_symbol(last_stderr)
-                missing_hint = f" Missing: '{missing}'." if missing else ""
-                context.recommended_next_action = (
-                    f"AI repair skipped because this appears to be a missing project dependency.{missing_hint} "
-                    "Upload the full project folder or include the file/library that defines the missing symbol."
+            context.error_category = "TIMEOUT_ERROR"
+            context.failure_reason = last_stderr
+            from app.config.settings import settings
+            context.recommended_next_action = f"The compile stage timed out after {settings.TIMEOUT_COMPILE} seconds. Check build system dependencies, optimize include paths, or compile files individually."
+        else:
+            category = classify_compiler_error(last_stderr)
+            context.error_category = category
+            if category not in {"USER_CODE_ERROR", "UNSUPPORTED_FEATURE", "COMPILATION_ERROR"}:
+                logger.error("[COMPILING] Non-code compile error detected: %s. Aborting to report generation.", category)
+                context.infrastructure_error = True
+                is_missing_dep = (
+                    category == "DEPENDENCY_ERROR"
+                    or "undefined symbol" in last_stderr.lower()
+                    or "undefined reference" in last_stderr.lower()
+                    or "cannot find" in last_stderr.lower()
+                    or "no such file" in last_stderr.lower()
                 )
+                if is_missing_dep:
+                    context.error_category = "DEPENDENCY_ERROR"
+                    from app.compiler.error_parser import extract_missing_symbol
+                    missing = extract_missing_symbol(last_stderr)
+                    missing_hint = f" Missing: '{missing}'." if missing else ""
+                    context.recommended_next_action = (
+                        f"AI repair skipped because this appears to be a missing project dependency.{missing_hint} "
+                        "Upload the full project folder or include the file/library that defines the missing symbol."
+                    )
     else:
         context.error_category = "NONE"
 
@@ -1104,12 +1182,31 @@ async def handle_analyzing(context: WorkflowContext) -> str:
         len(context.compiler_errors),
     )
 
-    result = analyze(
-        compiler_errors=context.compiler_errors,
-        source_code=source_code,
-        attempt=context.current_attempt,
-        migration_journal=context.migration_journal,
-    )
+    # ponytail: call analyze with timeout
+    import asyncio
+    from app.config.settings import settings
+    timeout = getattr(settings, "TIMEOUT_AI_ANALYSIS", 60)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                analyze,
+                compiler_errors=context.compiler_errors,
+                source_code=source_code,
+                attempt=context.current_attempt,
+                migration_journal=context.migration_journal,
+                context=context,
+            ),
+            timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        error_msg = f"AI analysis stage timed out after {timeout} seconds."
+        logger.error(error_msg)
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = "TIMEOUT_ERROR"
+        context.failure_reason = error_msg
+        context.recommended_next_action = f"The AI analysis stage timed out after {timeout} seconds. Check your Fireworks API key, network latency, or try a smaller source file."
+        raise RuntimeError(error_msg)
 
     context.analysis_result = result
 
@@ -1195,13 +1292,32 @@ async def handle_patching(context: WorkflowContext) -> str:
     # ── Call Patch Agent ────────────────────────────────────────────────
     analysis = context.analysis_result or {}
 
-    patched_source = patch(
-        source_code=source_code,
-        analysis=analysis,
-        compiler_errors=context.compiler_errors,
-        migration_journal=context.migration_journal,
-        previous_patches=context.patch_history,
-    )
+    # ponytail: call patch with timeout
+    import asyncio
+    from app.config.settings import settings
+    timeout = getattr(settings, "TIMEOUT_AI_PATCHING", 60)
+    try:
+        patched_source = await asyncio.wait_for(
+            asyncio.to_thread(
+                patch,
+                source_code=source_code,
+                analysis=analysis,
+                compiler_errors=context.compiler_errors,
+                migration_journal=context.migration_journal,
+                previous_patches=context.patch_history,
+                context=context,
+            ),
+            timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        error_msg = f"AI patching stage timed out after {timeout} seconds."
+        logger.error(error_msg)
+        context.infrastructure_error = True
+        context.compilation_success = False
+        context.error_category = "TIMEOUT_ERROR"
+        context.failure_reason = error_msg
+        context.recommended_next_action = f"The AI patching stage timed out after {timeout} seconds. Check your Fireworks API key, network latency, or try a smaller source file."
+        raise RuntimeError(error_msg)
 
     # Prevent infinite loop if the patch agent doesn't modify the source code
     if patched_source.strip() == source_code.strip():

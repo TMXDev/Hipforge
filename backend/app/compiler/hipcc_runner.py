@@ -290,11 +290,25 @@ class HipccRunner:
                 cmd.append(f"--offload-arch={target_arch}")
             working_dir = None
 
+        from app.config.settings import settings
+        timeout_sec = getattr(settings, "TIMEOUT_COMPILE", 60)
         try:
-            sandbox_res = run_sandboxed_compiler(workspace_path, cmd, working_dir=working_dir)
-            success = (sandbox_res["returncode"] == 0)
+            sandbox_res = run_sandboxed_compiler(workspace_path, cmd, timeout_sec=timeout_sec, working_dir=working_dir)
+            timed_out = sandbox_res.get("timeout", False)
+            success = (sandbox_res["returncode"] == 0) and not timed_out
             errors = []
-            if not success:
+            if timed_out:
+                msg = f"Compilation timed out after {timeout_sec} seconds."
+                from app.models.compiler_error import CompilerError
+                errors.append(CompilerError(
+                    file=source_path,
+                    line=1,
+                    column=1,
+                    message=msg,
+                    code="TIMEOUT"
+                ))
+                sandbox_res["stderr"] = msg
+            elif not success:
                 errors = parse_compiler_errors(sandbox_res["stderr"])
                 if not errors:
                     errors.append(CompilerError(

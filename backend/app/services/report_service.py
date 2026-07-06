@@ -240,6 +240,8 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     ai_requests = len([entry for entry in journal if entry.get("analysis_summary") or entry.get("patch_summary") or entry.get("research_summary")])
     lines.append(f"- **AI Requests Recorded**: `{ai_requests}`")
     lines.append("- **Token Usage**: `not captured by current client instrumentation`")
+    if getattr(context, "ai_context_truncated", False):
+        lines.append("- **AI Prompt Context Status**: `TRUNCATED` (AI prompt context size limit exceeded and was safely truncated to prevent hang)")
 
     lines.extend([
         f"",
@@ -285,6 +287,15 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Compile Success/Failure**: `{status}`",
         f"- **Error Category**: `{failure_category}`",
         f"- **Total Migration Duration**: `{duration_seconds}s`",
+    ])
+    
+    stage_timings = getattr(context, "stage_timings", {})
+    if stage_timings:
+        lines.append(f"- **Stage Timings**:")
+        for stage_name, stage_dur in stage_timings.items():
+            lines.append(f"  - **{stage_name}**: `{stage_dur}s`")
+    
+    lines.extend([
         f"- **Target Architecture**: `{getattr(context, 'target_gpu_architecture', 'gfx90a')}`",
         f"- **Repair Budget**: `{getattr(context, 'retry_budget', 0)}`",
         f"- **Compile Attempts**: `{compile_attempts}`",
@@ -499,6 +510,8 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
             "main_error": getattr(context, "main_error", None),
             "skipped_ai_repair_reason": get_skipped_ai_repair_reason(context),
             "workflow_trace": getattr(context, "workflow_trace", []),
+            "stage_timings": getattr(context, "stage_timings", {}),
+            "ai_context_truncated": getattr(context, "ai_context_truncated", False),
             "compile_command": getattr(context, "last_compile_command", "") or "",
             "source_files_compiled": getattr(context, "source_files", []) or [],
         },

@@ -124,3 +124,19 @@ At the end of a migration, HIPForge displays a **Validation Confidence** score (
 3. **AI Confidence:** Log-probabilities of translation confidence returned from the translation LLM.
 
 This score informs the user of how much manual revision may be required before the code is ready for real AMD GPU deployment.
+
+---
+
+## 6. Migration Limits & Scope
+
+To ensure fast feedback loops and prevent hangs or excessive resource usage on large/nested projects, HIPForge enforces strict migration limits during preflight checks:
+
+* **Scope**: Optimized for single-project or single-file migrations. Uploading large multi-project source repositories (such as the entire `cuda-samples` repository as a single ZIP) is not supported.
+* **Limits & Thresholds**:
+  * **CUDA Source Files Limit**: Maximum of `20` `.cu`/`.cuh` files.
+  * **Total Files Limit**: Maximum of `1000` total files in the upload.
+  * **Extracted ZIP Size Limit**: Maximum of `50 MB`.
+  * **Archive ZIP Size Limit**: Maximum of the configured workspace size limit (default `100 MB`).
+* **Preflight Abort**: If any of these limits are exceeded, HIPForge will abort early with a `PROJECT_TOO_LARGE` status, skip AI repair cycles, and list candidate subdirectory paths containing `.cu` files so you can target and upload them individually.
+* **Stage Timing**: Stage durations are recorded for each migration phase (Preparing, Preflight, Hipify, Compiling, Analyzing, Patching, Generating Report) and saved in the JSON/Markdown reports to help trace bottlenecks.
+* **AI Context Size Limit**: A maximum prompt context size of `50,000` characters is enforced. Large files, long compile logs, or verbose history are safely truncated to ensure fast LLM responses and prevent hangs.

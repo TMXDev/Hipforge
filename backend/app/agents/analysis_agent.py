@@ -86,12 +86,19 @@ _EXPECTED_SCHEMA = """\
 """
 
 
+def _truncate_field(text: str, max_len: int) -> tuple[str, bool]:
+    if not text or len(text) <= max_len:
+        return text, False
+    return text[:max_len] + f"\n[... truncated to {max_len} chars ...]", True
+
+
 def _build_messages(
     source_code: str,
     compiler_errors: List[Any],
     attempt: int,
     migration_journal: Optional[List[Dict[str, Any]]],
     previous_research: Optional[str],
+    context: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     """
     Construct the 6-section prompt message list per docs/09_AI_AGENTS.md.
@@ -131,6 +138,21 @@ def _build_messages(
     if previous_research:
         research_section = f"\n\n## Previous Research\n{previous_research}"
 
+    # ponytail: apply size cap and truncate if necessary
+    from app.config.settings import settings
+    cap = settings.MAX_AI_PROMPT_CONTEXT_CHARS
+    total_len = len(source_code) + len(diagnostics_text) + len(journal_text) + len(research_section)
+    
+    if total_len > cap:
+        source_code, _ = _truncate_field(source_code, int(cap * 0.4))
+        diagnostics_text, _ = _truncate_field(diagnostics_text, int(cap * 0.2))
+        journal_text, _ = _truncate_field(journal_text, int(cap * 0.2))
+        if research_section:
+            research_section, _ = _truncate_field(research_section, int(cap * 0.2))
+        
+        if context is not None:
+            context.ai_context_truncated = True
+
     # Assemble the user message as the 6-section template
     user_content = f"""\
 ## 2. Current Task
@@ -159,6 +181,12 @@ Respond ONLY with valid JSON matching this schema exactly:
 {_EXPECTED_SCHEMA}
 ```\
 """
+
+    # Final safety cap
+    if len(user_content) > cap:
+        user_content = user_content[:cap] + "\n[... prompt truncated to cap ...]"
+        if context is not None:
+            context.ai_context_truncated = True
 
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
@@ -226,6 +254,7 @@ def analyze(
     migration_journal: Optional[List[Dict[str, Any]]] = None,
     previous_research: Optional[str] = None,
     max_tokens: int = 2048,
+    context: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Run the Analysis Agent to diagnose a HIP compilation failure.
@@ -239,6 +268,7 @@ def analyze(
         migration_journal: List of previous attempt records (may be None/empty).
         previous_research: Research findings from the Research Agent (optional).
         max_tokens:        Maximum tokens for the AI completion response.
+        context:           WorkflowContext object for size-limit warnings.
 
     Returns:
         Dict with the Analysis Agent output schema:
@@ -262,6 +292,7 @@ def analyze(
         attempt=attempt,
         migration_journal=migration_journal,
         previous_research=previous_research,
+        context=context,
     )
 
     logger.info(

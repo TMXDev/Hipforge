@@ -94,7 +94,15 @@ Completed
 
 # Real Test Levels
 
-- **`pytest`**: Fast unit/integration tests that run locally with mock toolchains and mock databases.
-- **`pytest -m e2e_real`**: Real AMD ROCm toolchain smoke tests. These tests skip automatically if ROCm tools (`hipcc`/`hipify-clang`) or `Redis` are not available, ensuring the CI/CD pipeline never false-passes or fails on standard environments.
-- **Manual AMD GPU Runtime Test**: Execute the migrated binary directly on an AMD GPU platform to verify actual output equivalence.
-- **Manual AMD GPU Profiling Test**: Run `rocprof` validation on the compiled HIP execution binary to verify compute efficiency.
+- **Fast Unit/Integration Tests**: Run locally with mock toolchains and databases.
+  ```bash
+  $env:PYTHONPATH="backend;."
+  python -m pytest tests/ -v
+  ```
+- **Real E2E Smoke Tests (`e2e_real`)**: Runs the real E2E pipeline with real Redis/hipify/hipcc sandbox compiles (must not fake success). Skipped automatically if Redis/ROCm is unreachable.
+  ```bash
+  $env:PYTHONPATH="backend;."
+  python -m pytest -m e2e_real -s -vv
+  ```
+- **Optional/Future GPU Runtime Validation**: Executes binary on an AMD GPU platform.
+- **Optional/Future GPU Profiling**: Runs `rocprof` validation on the compiled HIP binary.

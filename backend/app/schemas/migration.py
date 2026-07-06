@@ -28,3 +28,7 @@ class MigrationStatusResponse(BaseModel):
     current_stage: str | None = None
     progress: float = 0.0
     message: str = ""
+    error_category: str | None = None
+    recommended_next_action: str | None = None
+    project_scan: dict | None = None
+    stage_timings: dict | None = None

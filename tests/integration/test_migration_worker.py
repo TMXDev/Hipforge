@@ -12,9 +12,6 @@ sys.path.insert(0, "backend")
 
 from app.config.settings import settings
 import app.redis.client
-import app.redis.manager
-import app.redis.publisher
-import app.redis.subscriber
 from app.workers.migration_worker import run_worker
 import app.workers.migration_worker
 from app.redis.keys import status_key, events_channel
@@ -27,9 +24,6 @@ def redis_integration_client():
     """Initializes the Redis client for integration testing with MockRedis fallback."""
     # Save originals so we can restore them after the test
     orig_client = app.redis.client.redis_client
-    orig_manager = app.redis.manager.redis_client
-    orig_publisher = app.redis.publisher.redis_client
-    orig_subscriber = app.redis.subscriber.redis_client
 
     is_live = False
     temp_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -45,17 +39,11 @@ def redis_integration_client():
 
     # Always patch app modules with the chosen client
     app.redis.client.redis_client = result_client
-    app.redis.manager.redis_client = result_client
-    app.redis.publisher.redis_client = result_client
-    app.redis.subscriber.redis_client = result_client
 
     yield result_client
 
     # Restore originals
     app.redis.client.redis_client = orig_client
-    app.redis.manager.redis_client = orig_manager
-    app.redis.publisher.redis_client = orig_publisher
-    app.redis.subscriber.redis_client = orig_subscriber
 
     if is_live:
         try:

@@ -43,6 +43,22 @@ async def get_migration_status_v1(migration_id: str):
     except Exception:
         pass
         
+    error_category = metadata.get("error_category") or "NONE" if isinstance(metadata, dict) else "NONE"
+    recommended_next_action = metadata.get("recommended_next_action") or "" if isinstance(metadata, dict) else ""
+    project_scan = None
+    if isinstance(metadata, dict) and metadata.get("project_scan"):
+        try:
+            project_scan = json.loads(metadata["project_scan"])
+        except Exception:
+            pass
+
+    stage_timings = None
+    if isinstance(metadata, dict) and metadata.get("stage_timings"):
+        try:
+            stage_timings = json.loads(metadata["stage_timings"])
+        except Exception:
+            pass
+
     return MigrationStatusResponse(
         migration_id=migration_id,
         status=status,
@@ -51,7 +67,11 @@ async def get_migration_status_v1(migration_id: str):
         updated_at=updated_at,
         current_stage=stage,
         progress=100.0 if status in ("COMPLETED", "FAILED") else 50.0,
-        message=f"Migration is {status} in stage {stage}."
+        message=f"Migration is {status} in stage {stage}.",
+        error_category=error_category,
+        recommended_next_action=recommended_next_action,
+        project_scan=project_scan,
+        stage_timings=stage_timings
     )
 
 

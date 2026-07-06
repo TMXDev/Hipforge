@@ -39,9 +39,6 @@ sys.path.insert(0, "backend")
 # Backend imports (after env vars are set)
 # ---------------------------------------------------------------------------
 import app.redis.client
-import app.redis.manager
-import app.redis.publisher
-import app.redis.subscriber
 from app.main import app as fastapi_app
 from app.workflow_engine.context import WorkflowContext
 from app.workflow_engine.state_machine import WorkflowEngine
@@ -72,22 +69,13 @@ def mock_redis():
 
     originals = {
         "client": app.redis.client.redis_client,
-        "manager": app.redis.manager.redis_client,
-        "publisher": app.redis.publisher.redis_client,
-        "subscriber": app.redis.subscriber.redis_client,
     }
 
     app.redis.client.redis_client = mock
-    app.redis.manager.redis_client = mock
-    app.redis.publisher.redis_client = mock
-    app.redis.subscriber.redis_client = mock
 
     yield mock
 
     app.redis.client.redis_client = originals["client"]
-    app.redis.manager.redis_client = originals["manager"]
-    app.redis.publisher.redis_client = originals["publisher"]
-    app.redis.subscriber.redis_client = originals["subscriber"]
 
 
 @pytest.fixture()

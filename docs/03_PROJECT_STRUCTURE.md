@@ -158,10 +158,6 @@ Example
 ```
 state_machine.py
 
-state.py
-
-runner.py
-
 transitions.py
 
 context.py
@@ -233,10 +229,6 @@ Example
 client.py
 
 keys.py
-
-publisher.py
-
-subscriber.py
 ```
 
 Only Redis-related logic belongs here.
@@ -288,8 +280,6 @@ Example
 
 ```
 manager.py
-
-events.py
 
 stream.py
 ```

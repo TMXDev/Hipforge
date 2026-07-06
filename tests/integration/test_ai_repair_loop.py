@@ -17,9 +17,6 @@ from app.workflow_engine.state_machine import WorkflowEngine
 from app.models.compiler_error import CompilerError
 import app.workflow_engine.states
 import app.redis.client
-import app.redis.manager
-import app.redis.publisher
-import app.redis.subscriber
 
 
 from tests.conftest import MockRedis
@@ -32,23 +29,14 @@ def mock_redis():
     
     # Save originals
     orig_client = app.redis.client.redis_client
-    orig_manager = app.redis.manager.redis_client
-    orig_pub = app.redis.publisher.redis_client
-    orig_sub = app.redis.subscriber.redis_client
     
     # Apply mocks
     app.redis.client.redis_client = mock_client
-    app.redis.manager.redis_client = mock_client
-    app.redis.publisher.redis_client = mock_client
-    app.redis.subscriber.redis_client = mock_client
     
     yield mock_client
     
     # Restore originals
     app.redis.client.redis_client = orig_client
-    app.redis.manager.redis_client = orig_manager
-    app.redis.publisher.redis_client = orig_pub
-    app.redis.subscriber.redis_client = orig_sub
 
 
 # ---------------------------------------------------------------------------

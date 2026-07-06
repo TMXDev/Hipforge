@@ -17,9 +17,6 @@ os.environ["USE_MOCK_COMPILER"] = "true"
 os.environ["USE_MOCK_AI"] = "true"
 
 import app.redis.client
-import app.redis.manager
-import app.redis.publisher
-import app.redis.subscriber
 import app.agents.base_agent
 from app.main import app as fastapi_app
 from app.workflow_engine.context import WorkflowContext
@@ -147,21 +144,12 @@ def mock_redis():
     mock = MockRedis()
     originals = {
         "client": app.redis.client.redis_client,
-        "manager": app.redis.manager.redis_client,
-        "publisher": app.redis.publisher.redis_client,
-        "subscriber": app.redis.subscriber.redis_client,
     }
     app.redis.client.redis_client = mock
-    app.redis.manager.redis_client = mock
-    app.redis.publisher.redis_client = mock
-    app.redis.subscriber.redis_client = mock
 
     yield mock
 
     app.redis.client.redis_client = originals["client"]
-    app.redis.manager.redis_client = originals["manager"]
-    app.redis.publisher.redis_client = originals["publisher"]
-    app.redis.subscriber.redis_client = originals["subscriber"]
 
 
 @pytest.fixture()

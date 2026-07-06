@@ -228,12 +228,15 @@ class HipifyRunner:
 
         cmd = ["hipify-clang", source_path, "-o", output_path, "--", *self._hipify_compile_args(source_path)]
         
+        from app.config.settings import settings
+        timeout_sec = getattr(settings, "TIMEOUT_HIPIFY", 30)
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
+                timeout=timeout_sec
             )
             
             if result.returncode == 0:
@@ -264,7 +267,16 @@ class HipifyRunner:
                     "stdout": result.stdout,
                     "stderr": result.stderr or "hipify-clang returned failure",
                 }
-                
+        except subprocess.TimeoutExpired as te:
+            err_msg = f"hipify-clang stage timed out after {timeout_sec} seconds."
+            logger.error(err_msg)
+            return {
+                "success": False,
+                "output_path": output_path,
+                "stdout": "",
+                "stderr": err_msg,
+                "timeout": True
+            }
         except (FileNotFoundError, subprocess.SubprocessError):
             sandboxed = self._run_sandboxed_hipify(source_path, output_path)
             if sandboxed is not None:

@@ -65,3 +65,159 @@ async def test_dependency_errors_produce_clear_explanation():
     assert ctx.error_category == "DEPENDENCY_ERROR"
     assert "AI repair skipped because this appears to be a missing project dependency." in ctx.recommended_next_action
     assert "Upload the full project folder or include the file/library that defines the missing symbol." in ctx.recommended_next_action
+
+@pytest.mark.asyncio
+async def test_oversized_project_fails_preflight(tmp_path, monkeypatch):
+    """Verify that oversized zip/project fails early in preflight stage."""
+    from app.config.settings import settings
+    monkeypatch.setattr(settings, "MAX_TOTAL_FILES_FOR_AUTO_MIGRATION", 2)
+    
+    ws = tmp_path / "ws"
+    for sub in ("input", "generated", "logs", "artifacts", "reports", "exports"):
+        (ws / sub).mkdir(parents=True)
+        
+    (ws / "input" / "kernel.cu").write_text("#include <cuda_runtime.h>\n", encoding="utf-8")
+    (ws / "input" / "helper1.cu").write_text("void f1(){}", encoding="utf-8")
+    (ws / "input" / "helper2.cu").write_text("void f2(){}", encoding="utf-8")
+    
+    ctx = WorkflowContext("test-oversized", str(ws))
+    ctx.current_state = "PREFLIGHT"
+    
+    from app.workflow_engine.states import handle_preflight
+    with pytest.raises(RuntimeError) as exc:
+        await handle_preflight(ctx)
+        
+    assert "Project is too large" in str(exc.value)
+    assert ctx.error_category == "PROJECT_TOO_LARGE"
+    assert ctx.infrastructure_error is True
+    assert "Extract the archive and migrate one CUDA sample" in ctx.recommended_next_action
+
+@pytest.mark.asyncio
+async def test_many_cu_files_triggers_guidance(tmp_path, monkeypatch):
+    """Verify that many .cu files exceeds the auto migration limit and provides Guidance."""
+    from app.config.settings import settings
+    monkeypatch.setattr(settings, "MAX_CUDA_FILES_FOR_AUTO_MIGRATION", 1)
+    
+    ws = tmp_path / "ws"
+    for sub in ("input", "generated", "logs", "artifacts", "reports", "exports"):
+        (ws / sub).mkdir(parents=True)
+        
+    (ws / "input" / "kernel.cu").write_text("#include <cuda_runtime.h>\n", encoding="utf-8")
+    (ws / "input" / "helper1.cu").write_text("void f1(){}", encoding="utf-8")
+    
+    ctx = WorkflowContext("test-many-cu", str(ws))
+    ctx.current_state = "PREFLIGHT"
+    
+    from app.workflow_engine.states import handle_preflight
+    with pytest.raises(RuntimeError) as exc:
+        await handle_preflight(ctx)
+        
+    assert "number of CUDA files" in str(exc.value)
+    assert ctx.error_category == "PROJECT_TOO_LARGE"
+    assert "Extract the archive" in ctx.recommended_next_action
+
+@pytest.mark.asyncio
+async def test_dependency_error_skips_ai_repair_without_delay(tmp_path):
+    """Verify that dependency errors skip AI repair immediately by setting infrastructure_error."""
+    ws = tmp_path / "ws"
+    for sub in ("input", "generated", "logs", "artifacts", "reports", "exports"):
+        (ws / sub).mkdir(parents=True)
+    hip_file = ws / "generated" / "kernel.hip"
+    hip_file.write_text("int main() { return 0; }\n", encoding="utf-8")
+
+    ctx = WorkflowContext("test-dep-skip", str(ws))
+    ctx.hipify_output_path = str(hip_file)
+    ctx.last_compile_stderr = "fatal error: 'missing_lib.h' file not found"
+    ctx.current_state = "COMPILING"
+    ctx.target_gpu_architecture = "gfx90a"
+    
+    with patch("app.compiler.hipcc_runner.run_hipcc") as mock_run:
+        mock_run.return_value = {
+            "success": False,
+            "errors": [],
+            "stderr": "fatal error: 'missing_lib.h' file not found",
+            "stdout": "",
+            "command": "hipcc"
+        }
+        from app.workflow_engine.states import handle_compiling
+        await handle_compiling(ctx)
+        
+    assert ctx.compilation_success is False
+    assert ctx.error_category == "DEPENDENCY_ERROR"
+    assert ctx.infrastructure_error is True
+    assert "AI repair skipped because this appears to be a missing project dependency." in ctx.recommended_next_action
+
+@pytest.mark.asyncio
+async def test_stage_timings_in_json_report(tmp_path, monkeypatch):
+    """Verify that stage timings are serialized into the JSON report."""
+    mid = "test-timings-json"
+    ws = tmp_path / mid
+    for sub in ("input", "generated", "logs", "artifacts", "reports", "exports"):
+        (ws / sub).mkdir(parents=True)
+        
+    ctx = WorkflowContext(mid, str(ws))
+    ctx.stage_timings = {"PREFLIGHT": 1.23, "HIPIFY": 2.34}
+    ctx.compilation_success = True
+    ctx.project_inventory = {"input_kind": "single_file"}
+    
+    monkeypatch.setattr(
+        "app.services.report_service.get_workspace_path",
+        lambda _id: ws,
+    )
+    
+    from app.services.report_service import generate_json_report
+    await generate_json_report(mid, ctx)
+    
+    json_path = ws / "reports" / "migration_report.json"
+    assert json_path.exists()
+    import json
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    
+    metrics = data.get("migration_metrics", {})
+    assert "stage_timings" in metrics
+    assert metrics["stage_timings"]["PREFLIGHT"] == 1.23
+    assert metrics["stage_timings"]["HIPIFY"] == 2.34
+
+def test_ai_context_cap_truncation(monkeypatch):
+    """Verify that huge prompts are truncated according to settings.MAX_AI_PROMPT_CONTEXT_CHARS."""
+    from app.config.settings import settings
+    monkeypatch.setattr(settings, "MAX_AI_PROMPT_CONTEXT_CHARS", 100)
+    
+    source = "A" * 500
+    errors = ["Error" * 50]
+    
+    ctx = MagicMock()
+    ctx.ai_context_truncated = False
+    
+    from app.agents.analysis_agent import _build_messages
+    messages = _build_messages(
+        source_code=source,
+        compiler_errors=errors,
+        attempt=0,
+        migration_journal=[],
+        previous_research=None,
+        context=ctx
+    )
+    
+    user_content = messages[1]["content"]
+    assert len(user_content) <= 150
+    assert ctx.ai_context_truncated is True
+
+@pytest.mark.asyncio
+async def test_normal_small_cuda_project_runs(tmp_path, monkeypatch):
+    """Verify that a small project with direct compile and no errors succeeds preflight."""
+    ws = tmp_path / "ws"
+    for sub in ("input", "generated", "logs", "artifacts", "reports", "exports"):
+        (ws / sub).mkdir(parents=True)
+        
+    (ws / "input" / "kernel.cu").write_text("#include <cuda_runtime.h>\n__global__ void k(){}\nint main(){return 0;}\n", encoding="utf-8")
+    
+    ctx = WorkflowContext("test-normal-small", str(ws))
+    ctx.target_gpu_architecture = "gfx90a"
+    ctx.current_state = "PREFLIGHT"
+    
+    from app.workflow_engine.states import handle_preflight
+    next_state = await handle_preflight(ctx)
+    assert next_state == "HIPIFY"
+    assert ctx.error_category == "NONE"
+    assert ctx.infrastructure_error is False

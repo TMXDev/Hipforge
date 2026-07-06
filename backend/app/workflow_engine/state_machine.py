@@ -130,6 +130,9 @@ class WorkflowEngine:
                 message=f"Starting stage {state}..."
             )
             
+            # ponytail: stage timing start
+            import time
+            start_sec = time.time()
             try:
                 # Call state handler to run its stub side effects (like patching incrementing attempts)
                 await handler(self.context)
@@ -154,6 +157,12 @@ class WorkflowEngine:
                         self.context.error_category = "MIGRATION_ERROR"
                         self.context.failure_reason = error_msg
                 
+            # ponytail: stage timing end
+            duration_seconds = round(time.time() - start_sec, 2)
+            if not hasattr(self.context, "stage_timings") or self.context.stage_timings is None:
+                self.context.stage_timings = {}
+            self.context.stage_timings[state] = duration_seconds
+
             if success:
                 # Publish completed event after each state succeeds
                 await publish_event(
@@ -165,7 +174,8 @@ class WorkflowEngine:
                 self.context.workflow_trace.append({
                     "event": "state_success",
                     "state": state,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "duration_seconds": duration_seconds
                 })
             else:
                 # Publish failed event with error message on failure
@@ -184,7 +194,8 @@ class WorkflowEngine:
                     "event": "state_failure",
                     "state": state,
                     "error": self.context.main_error,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "duration_seconds": duration_seconds
                 })
                 
             from app.services.journal_service import write_state_journal_entry; await write_state_journal_entry(self.context)
@@ -199,6 +210,22 @@ class WorkflowEngine:
 
             previous_state = state
             self.context.current_state = next_state
+            
+            # ponytail: update Redis metadata hash with latest info on transition
+            try:
+                from app.redis.keys import metadata_key
+                metadata_updates = {
+                    "current_state": self.context.current_state or "FINISHED",
+                    "error_category": getattr(self.context, "error_category", "NONE") or "NONE",
+                    "recommended_next_action": getattr(self.context, "recommended_next_action", "") or "",
+                    "failure_reason": getattr(self.context, "failure_reason", "") or "",
+                    "stage_timings": json.dumps(self.context.stage_timings)
+                }
+                if getattr(self.context, "project_scan", None):
+                    metadata_updates["project_scan"] = json.dumps(self.context.project_scan)
+                await app.redis.client.redis_client.hset(metadata_key(self.context.migration_id), mapping=metadata_updates)
+            except Exception as exc:
+                logger.warning(f"Failed to update metadata hash in Redis: {exc}")
             
         return previous_state
 

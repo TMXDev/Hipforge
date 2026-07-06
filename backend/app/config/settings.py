@@ -61,6 +61,17 @@ class Settings:
     # Set RUNTIME_VALIDATION_ENABLED=true only in environments with AMD GPU hardware.
     RUNTIME_VALIDATION_ENABLED: bool = os.getenv("RUNTIME_VALIDATION_ENABLED", "false").lower() == "true"
 
+    # ponytail: v0 limits and stage timeouts
+    MAX_CUDA_FILES_FOR_AUTO_MIGRATION: int = int(os.getenv("MAX_CUDA_FILES_FOR_AUTO_MIGRATION", "20"))
+    MAX_TOTAL_FILES_FOR_AUTO_MIGRATION: int = int(os.getenv("MAX_TOTAL_FILES_FOR_AUTO_MIGRATION", "1000"))
+    MAX_EXTRACTED_BYTES_FOR_AUTO_MIGRATION: int = int(os.getenv("MAX_EXTRACTED_BYTES_FOR_AUTO_MIGRATION", str(50 * 1024 * 1024)))
+    MAX_AI_PROMPT_CONTEXT_CHARS: int = int(os.getenv("MAX_AI_PROMPT_CONTEXT_CHARS", "50000"))
+
+    TIMEOUT_HIPIFY: int = int(os.getenv("TIMEOUT_HIPIFY", "30"))
+    TIMEOUT_COMPILE: int = int(os.getenv("TIMEOUT_COMPILE", "60"))
+    TIMEOUT_AI_ANALYSIS: int = int(os.getenv("TIMEOUT_AI_ANALYSIS", "60"))
+    TIMEOUT_AI_PATCHING: int = int(os.getenv("TIMEOUT_AI_PATCHING", "60"))
+
 
 
     # GPU Pinning Configuration
@@ -95,6 +106,16 @@ class Settings:
             return int(limit) * multiplier
         except ValueError:
             return 100 * 1024 * 1024
+
+    @property
+    def max_upload_bytes(self) -> int:
+        val = os.getenv("MAX_UPLOAD_BYTES")
+        if val:
+            try:
+                return int(val)
+            except ValueError:
+                pass
+        return self.max_file_size_bytes
 
     def validate(self) -> None:
         if not self.USE_MOCK_AI and (

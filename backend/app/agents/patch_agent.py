@@ -113,12 +113,19 @@ def _format_errors(compiler_errors: List[Any]) -> str:
     return "\n".join(lines)
 
 
+def _truncate_field(text: str, max_len: int) -> tuple[str, bool]:
+    if not text or len(text) <= max_len:
+        return text, False
+    return text[:max_len] + f"\n[... truncated to {max_len} chars ...]", True
+
+
 def _build_messages(
     source_code: str,
     analysis: Dict[str, Any],
     compiler_errors: List[Any],
     migration_journal: Optional[List[Dict[str, Any]]],
     previous_patches: Optional[List[str]],
+    context: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     """
     Construct the 6-section prompt message list per docs/09_AI_AGENTS.md.
@@ -137,6 +144,21 @@ def _build_messages(
         patches_text = "\n\n".join(previous_patches)
     else:
         patches_text = "(none)"
+
+    # ponytail: apply size cap and truncate if necessary
+    from app.config.settings import settings
+    cap = settings.MAX_AI_PROMPT_CONTEXT_CHARS
+    total_len = len(source_code) + len(analysis_text) + len(diagnostics_text) + len(journal_text) + len(patches_text)
+    
+    if total_len > cap:
+        source_code, _ = _truncate_field(source_code, int(cap * 0.4))
+        analysis_text, _ = _truncate_field(analysis_text, int(cap * 0.1))
+        diagnostics_text, _ = _truncate_field(diagnostics_text, int(cap * 0.2))
+        journal_text, _ = _truncate_field(journal_text, int(cap * 0.2))
+        patches_text, _ = _truncate_field(patches_text, int(cap * 0.1))
+        
+        if context is not None:
+            context.ai_context_truncated = True
 
     user_content = f"""\
 ## 2. Current Task
@@ -168,6 +190,12 @@ Do NOT wrap it in markdown fences.
 Do NOT add any explanation before or after the code.
 The output will be written directly to the .hip source file.\
 """
+
+    # Final safety cap
+    if len(user_content) > cap:
+        user_content = user_content[:cap] + "\n[... prompt truncated to cap ...]"
+        if context is not None:
+            context.ai_context_truncated = True
 
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
@@ -266,6 +294,7 @@ def patch(
     migration_journal: Optional[List[Dict[str, Any]]] = None,
     previous_patches: Optional[List[str]] = None,
     max_tokens: int = 4096,
+    context: Optional[Any] = None,
 ) -> str:
     """
     Run the Patch Agent to produce a corrected HIP source file.
@@ -279,6 +308,7 @@ def patch(
         migration_journal: List of previous attempt records (may be None/empty).
         previous_patches:  List of raw source strings from prior patch attempts.
         max_tokens:        Maximum tokens for the AI completion response.
+        context:           WorkflowContext object for size-limit warnings.
 
     Returns:
         The full corrected source file as a raw string.
@@ -302,6 +332,7 @@ def patch(
         compiler_errors=compiler_errors,
         migration_journal=migration_journal,
         previous_patches=previous_patches,
+        context=context,
     )
 
     logger.info(
