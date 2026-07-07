@@ -6,7 +6,7 @@ import json
 import app.redis.client
 from app.redis.keys import events_channel
 
-async def publish_event(migration_id: str, stage: str, status: str, message: str) -> int:
+async def publish_event(migration_id: str, stage: str, status: str, message: str, **kwargs) -> int:
     channel = events_channel(migration_id)
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = {
@@ -19,6 +19,7 @@ async def publish_event(migration_id: str, stage: str, status: str, message: str
         "state": stage,
         "details": message
     }
+    payload.update(kwargs)
     try:
         return await app.redis.client.redis_client.publish(channel, json.dumps(payload))
     except Exception as exc:
@@ -33,7 +34,8 @@ async def publish_log(
     generated_path: str = None,
     stage: str = None,
     status: str = None,
-    reason: str = None
+    reason: str = None,
+    **kwargs
 ) -> int:
     channel = events_channel(migration_id)
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -49,6 +51,7 @@ async def publish_log(
         "status": status,
         "reason": reason
     }
+    payload.update(kwargs)
     logger.info(f"[Live Log] {message} (stage={stage}, status={status})")
     try:
         return await app.redis.client.redis_client.publish(channel, json.dumps(payload))

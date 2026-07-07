@@ -66,13 +66,13 @@ class TestRuntimeValidationDefaults:
     def test_runtime_validation_disabled_by_default(self):
         ctx = WorkflowContext("test-rt-defaults", "/tmp/fake")
         assert ctx.runtime_validation_enabled is False
-        assert ctx.runtime_validation_status == "NOT_CONFIGURED"
+        assert ctx.runtime_validation_status == "NOT_RUN"
         assert ctx.profiling_status == "NOT_CONFIGURED"
 
     def test_default_confidence_is_low(self):
         ctx = WorkflowContext("test-low-default", "/tmp/fake")
         assert ctx.validation_confidence == "LOW"
-        assert ctx.validation_confidence_reason == "hipify completed but compilation failed"
+        assert ctx.validation_confidence_reason == "conversion happened but real compile failed or did not run"
 
 
 # ── 3. last_compile_command safety ──────────────────────────────────
@@ -118,10 +118,9 @@ class TestLastCompileCommandSafety:
 
 def test_mock_compiler_confidence_reasons():
     level, reason = compute_confidence(True, True, compiler_mocked=True)
-    assert level == MEDIUM
-    assert "(mock compiler mode)" in reason
+    assert level == LOW
     assert "mocked" in reason
 
     level, reason = compute_confidence(True, False, compiler_mocked=True)
     assert level == LOW
-    assert "(mock compiler mode)" in reason
+    assert "mocked" in reason

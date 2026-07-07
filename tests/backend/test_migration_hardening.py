@@ -315,10 +315,10 @@ class TestReportFields:
         # validation_confidence section
         vc = data["validation_confidence"]
         assert vc["validation_confidence"] == "LOW"
-        assert vc["validation_confidence_reason"] == "hipify completed but compilation failed"
+        assert vc["validation_confidence_reason"] == "conversion happened but real compile failed or did not run (hipify failed)"
         assert vc["compile_validation_status"] == "FAILED"
         assert vc["runtime_validation_enabled"] is False
-        assert vc["runtime_validation_status"] == "NOT_CONFIGURED"
+        assert vc["runtime_validation_status"] == "NOT_RUN"
         assert "runtime_validation_reason" in vc
         assert vc["profiling_status"] == "NOT_CONFIGURED"
 
@@ -378,5 +378,5 @@ class TestReportFields:
         assert "Validation Confidence" in md
         assert "Runtime Validation Enabled" in md
         assert "Runtime Validation Status" in md
-        assert "NOT_CONFIGURED" in md
+        assert "NOT_RUN" in md
         assert "Profiling Status" in md

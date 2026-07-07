@@ -214,6 +214,42 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
             </span>
           </ReportRow>
 
+          {/* Compiler Mode */}
+          {status?.compiler_mode && (
+            <ReportRow label="Compiler Mode">
+              <span className="font-mono text-xs uppercase font-medium tracking-wide" style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--text-primary)" }}>
+                {status.compiler_mode === "test-only" ? "test-only (mock)" : status.compiler_mode}
+              </span>
+            </ReportRow>
+          )}
+
+          {/* Compile Status */}
+          {status?.compile_status && (
+            <ReportRow label="Compiler Validation">
+              <span className={`font-mono text-xs uppercase font-semibold tracking-wide ${status.compile_status === "PASSED" ? "text-emerald-600 dark:text-emerald-400" : status.compile_status === "FAILED" || status.compile_status === "FAILED_SETUP" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {status.compile_status}
+              </span>
+            </ReportRow>
+          )}
+
+          {/* Validation Confidence */}
+          {status?.validation_confidence && (
+            <ReportRow label="Validation Confidence">
+              <span className={`font-mono text-xs font-semibold tracking-wide ${status.validation_confidence === "LOW" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {status.validation_confidence}
+              </span>
+            </ReportRow>
+          )}
+
+          {/* Runtime Validation Status */}
+          {status?.runtime_validation_status && (
+            <ReportRow label="Runtime Validation">
+              <span className="font-mono text-xs uppercase font-medium tracking-wide" style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--text-primary)" }}>
+                {status.runtime_validation_status === "NOT_CONFIGURED" ? "NOT_RUN" : status.runtime_validation_status}
+              </span>
+            </ReportRow>
+          )}
+
           {/* Separator */}
           <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} />
 
@@ -239,6 +275,42 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
               </p>
             )}
           </div>
+
+          {/* Compile Command */}
+          {status?.compile_command && (
+            <div className="space-y-1.5 pt-4 border-t" style={{ borderColor: "var(--border-primary)" }}>
+              <span className="text-[9px] font-medium tracking-[0.15em] uppercase" style={{ color: "var(--text-muted)" }}>
+                Last Compile Command
+              </span>
+              <pre className="overflow-x-auto border p-3 font-mono text-[10px] text-themeText select-all rounded" style={{ fontFamily: "'JetBrains Mono', monospace", backgroundColor: "var(--bg-secondary)", borderColor: "var(--border-primary)" }}>
+                {status.compile_command}
+              </pre>
+            </div>
+          )}
+
+          {/* Main Error */}
+          {status?.main_error && (
+            <div className="space-y-1.5 pt-4 border-t" style={{ borderColor: "var(--border-primary)" }}>
+              <span className="text-[9px] font-medium tracking-[0.15em] uppercase text-red-700 dark:text-red-400">
+                Main Error ({status?.error_category})
+              </span>
+              <pre className="overflow-x-auto border bg-red-500/5 p-3 font-mono text-xs text-red-700 dark:text-red-400 whitespace-pre-wrap rounded" style={{ fontFamily: "'JetBrains Mono', monospace", borderColor: "var(--border-primary)" }}>
+                {status.main_error}
+              </pre>
+            </div>
+          )}
+
+          {/* Recommended Next Action */}
+          {status?.recommended_next_action && (
+            <div className="space-y-1 pt-4 border-t" style={{ borderColor: "var(--border-primary)" }}>
+              <span className="text-[9px] font-medium tracking-[0.15em] uppercase text-amber-700 dark:text-amber-400">
+                Recommended Next Action
+              </span>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                {status.recommended_next_action}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

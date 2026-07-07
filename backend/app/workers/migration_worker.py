@@ -36,6 +36,16 @@ def register_signals():
     except ValueError as e:
         logger.warning(f"Could not register signal handlers (this is expected in some environments): {e}")
 
+async def worker_heartbeat_loop():
+    """Periodically writes worker heartbeat in Redis."""
+    from app.redis.client import redis_client
+    while running:
+        try:
+            await redis_client.setex("worker:heartbeat", 15, "active")
+        except Exception as e:
+            logger.debug(f"Failed to write worker heartbeat: {e}")
+        await asyncio.sleep(5)
+
 async def run_worker():
     """Main worker consumption and execution loop."""
     global running
@@ -44,10 +54,17 @@ async def run_worker():
     
     register_signals()
     
-    while running:
-        try:
-            # Step 1: Dequeue a job from the pending queue (blocks until job or timeout)
-            result = await app.redis.client.redis_client.brpop(pending_queue_key(), timeout=brpop_timeout)
+    heartbeat_task = asyncio.create_task(worker_heartbeat_loop())
+    try:
+        while running:
+            try:
+                # Step 1: Dequeue a job from the pending queue (blocks until job or timeout)
+                result = await app.redis.client.redis_client.brpop(pending_queue_key(), timeout=brpop_timeout)
+            except Exception as e:
+                logger.warning(f"Error during BRPOP from Redis: {e}")
+                await asyncio.sleep(1)
+                continue
+
             if result is None:
                 continue
                 
@@ -114,13 +131,14 @@ async def run_worker():
                 logger.info(f"Cleaning up active job status for: {migration_id}")
                 await app.redis.client.redis_client.lrem(active_queue_key(), 0, migration_id)
                 
-        except asyncio.CancelledError:
-            logger.info("Worker task has been cancelled.")
-            break
-        except Exception as e:
-            logger.exception(f"Error encountered in worker main loop: {e}")
-            # Sleep briefly to avoid tight loop on Redis connection issues
-            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        logger.info("Worker task has been cancelled.")
+    except Exception as e:
+        logger.exception(f"Error encountered in worker main loop: {e}")
+        # Sleep briefly to avoid tight loop on Redis connection issues
+        await asyncio.sleep(1)
+    finally:
+        heartbeat_task.cancel()
 
 def main():
     """Synchronous entrypoint for python execution."""

@@ -111,13 +111,19 @@ class WorkflowContext:
         # Consumed by report generator to show "Learning / Previous Knowledge Used".
         self.lesson_matched: Optional[dict] = None
 
+        # ── Compiler validation info ─────────────────────────────────────
+        # NOT_RUN | PASSED | FAILED | FAILED_SETUP
+        self.compile_status: str = "NOT_RUN"
+        # real | test-only | unavailable
+        self.compiler_mode: str = "real"
+
         # ── Validation confidence ────────────────────────────────────────
         # Set after COMPILING completes. See compiler/validation_confidence.py.
         # LOW | MEDIUM | HIGH | PROFILED
         self.validation_confidence: str = "LOW"
-        self.validation_confidence_reason: str = "hipify completed but compilation failed"
-        # NOT_CONFIGURED | SKIPPED | PASSED | FAILED
-        self.runtime_validation_status: str = "NOT_CONFIGURED"
+        self.validation_confidence_reason: str = "conversion happened but real compile failed or did not run"
+        # NOT_RUN | PASSED | FAILED
+        self.runtime_validation_status: str = "NOT_RUN"
         self.runtime_validation_reason: str = ""
         # Mirrors RUNTIME_VALIDATION_ENABLED env flag; default False for v0.
         self.runtime_validation_enabled: bool = False
@@ -131,3 +137,15 @@ class WorkflowContext:
 
         # ── File lifecycle tracking ──────────────────────────────────────
         self.file_lifecycle: dict = {}
+
+        # ── Target architecture ───────────────────────────────────────────────
+        # Set from Redis metadata by handle_preflight; fallback "gfx90a".
+        self.target_gpu_architecture: str = "gfx90a"
+        # ArchAdvice.to_dict() result set by handle_preflight after advise().
+        self.architecture_advice: dict = {}
+        # HIGH | MEDIUM | LOW
+        self.architecture_confidence: str = "LOW"
+        # Flat list of risk_warnings + recommended_actions from ArchAdvice.
+        self.architecture_warnings: list = []
+        # detected_gpu | user_selected | configured_default | fallback_default | unknown
+        self.architecture_selection_source: str = "unknown"

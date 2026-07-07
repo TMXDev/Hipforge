@@ -94,5 +94,24 @@ async def initiate_migration(
         json.dumps({"migration_id": migration_id, **payload})
     )
     
+    # 8. Publish job created event
+    try:
+        from app.redis.keys import events_channel
+        channel = events_channel(migration_id)
+        timestamp = now.isoformat().replace("+00:00", "Z")
+        event_payload = {
+            "type": "event",
+            "migration_id": migration_id,
+            "timestamp": timestamp,
+            "stage": "QUEUED",
+            "status": "completed",
+            "message": "Migration job created and queued.",
+            "state": "QUEUED",
+            "details": "Migration job created and queued."
+        }
+        await app.redis.client.redis_client.publish(channel, json.dumps(event_payload))
+    except Exception as exc:
+        logger.warning(f"Failed to publish job created event: {exc}")
+        
     logger.info(f"Migration {migration_id} successfully queued.")
     return migration_id

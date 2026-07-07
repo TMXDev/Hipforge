@@ -23,6 +23,14 @@ export interface MigrationStatus {
   current_stage?: string;
   progress?: number;
   message?: string;
+  compiler_mode?: string;
+  compile_status?: string;
+  validation_confidence?: string;
+  runtime_validation_status?: string;
+  compile_command?: string;
+  main_error?: string;
+  error_category?: string;
+  recommended_next_action?: string;
 }
 
 /** Standardised API error body returned by the backend */

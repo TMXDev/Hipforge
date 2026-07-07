@@ -234,7 +234,9 @@ def _sandbox_probe_command() -> List[str]:
         "-lc",
         (
             "echo HIPIFY=$(command -v hipify-clang || true); "
+            "echo HIPIFY_VERSION=$($(command -v hipify-clang || echo hipify-clang) --version 2>&1 | head -n 1 || true); "
             "echo HIPCC=$(command -v hipcc || true); "
+            "echo HIPCC_VERSION=$($(command -v hipcc || echo hipcc) --version 2>&1 | head -n 1 || true); "
             "echo CMAKE=$(command -v cmake || true); "
             "echo NINJA=$(command -v ninja || true); "
             "if [ -d /usr/local/cuda ] || command -v nvcc >/dev/null 2>&1; then echo CUDA=present; else echo CUDA=; fi; "
@@ -564,13 +566,21 @@ def run_preflight(
     ]
     for check_id, name, key, category, recommendation in sandbox_checks:
         value = sandbox_value(key)
+        details = {"value": value}
         if compiler_is_mocked:
             status = SKIP
             message = f"{name} check skipped because USE_MOCK_COMPILER=true."
             critical = False
         else:
             status = PASS if value else FAIL
-            message = f"{name} found at {value}." if value else f"{name} was not found in the sandbox."
+            if value:
+                version = sandbox_value(f"{key}_VERSION")
+                ver_str = f" (version: {version})" if version else ""
+                message = f"{name} found at {value}{ver_str}."
+                if key in ("HIPIFY", "HIPCC") and version:
+                    details["version"] = version
+            else:
+                message = f"{name} was not found in the sandbox."
             critical = False if check_id in {"cuda_toolkit", "cuda_runtime_header", "libdevice"} else True
         _add_check(
             checks,
@@ -581,7 +591,7 @@ def run_preflight(
             category,
             message,
             "" if status == PASS else recommendation,
-            {"value": value},
+            details,
         )
 
     cmake_path = _check_host_binary("cmake") or sandbox_value("CMAKE")
@@ -837,6 +847,47 @@ def run_preflight(
         True,
         ERROR_ENVIRONMENT,
         disk_space_check,
+    )
+
+    def redis_check():
+        try:
+            import redis
+            client = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=3)
+            if client.ping():
+                return PASS, "Redis server is reachable and responding to ping.", "", {"url": settings.REDIS_URL}
+            return FAIL, "Redis ping failed.", "Check Redis server status and connectivity.", {"url": settings.REDIS_URL}
+        except Exception as exc:
+            return FAIL, f"Redis connection failed: {exc}", "Ensure Redis is installed and running on the configured port.", {"url": settings.REDIS_URL}
+
+    _timed_check(
+        checks,
+        "redis_reachable",
+        "Redis Connectivity",
+        True,
+        ERROR_ENVIRONMENT,
+        redis_check,
+    )
+
+    def worker_check():
+        try:
+            import redis
+            client = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=3)
+            hb = client.get("worker:heartbeat")
+            if hb:
+                if isinstance(hb, bytes):
+                    hb = hb.decode("utf-8")
+                return PASS, f"Migration worker heartbeat is active ({hb}).", "", {}
+            return FAIL, "No active worker heartbeat detected. Worker might be offline.", "Start the migration worker service (python -m app.workers.migration_worker).", {}
+        except Exception as exc:
+            return FAIL, f"Worker check failed: {exc}", "Verify Redis connectivity and start the worker.", {}
+
+    _timed_check(
+        checks,
+        "worker_reachable",
+        "Migration Worker",
+        not compiler_is_mocked,
+        ERROR_ENVIRONMENT,
+        worker_check,
     )
 
     summary = summarize_report(checks)
