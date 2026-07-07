@@ -60,7 +60,7 @@ async def _run_runtime_validation(context: WorkflowContext) -> None:
     context.runtime_validation_enabled = enabled
 
     if not enabled:
-        context.runtime_validation_status = "NOT_CONFIGURED"
+        context.runtime_validation_status = "NOT_RUN"
         context.runtime_validation_reason = (
             "Runtime validation is disabled (RUNTIME_VALIDATION_ENABLED=false). "
             "HIPForge v0 reports compile-validated migrations only."
@@ -68,18 +68,18 @@ async def _run_runtime_validation(context: WorkflowContext) -> None:
         return
 
     if not context.compilation_success:
-        context.runtime_validation_status = "SKIPPED"
-        context.runtime_validation_reason = "Compilation did not succeed; runtime validation skipped."
+        context.runtime_validation_status = "NOT_RUN"
+        context.runtime_validation_reason = "Compilation did not succeed; runtime validation was not run."
         return
 
     # ponytail: v0 placeholder — do not execute binary, do not fake PASSED.
     # Upgrade path: invoke binary under rocm-smi / rocsmi guard, capture stdout, compare.
-    context.runtime_validation_status = "SKIPPED"
+    context.runtime_validation_status = "NOT_RUN"
     context.runtime_validation_reason = (
         "Runtime validation is enabled but not yet implemented for this migration path. "
         "No binary was executed. Set up a gpu_real test suite for validated execution."
     )
-    logger.info("[RUNTIME_VALIDATION] Enabled but not implemented for v0 — marked SKIPPED.")
+    logger.info("[RUNTIME_VALIDATION] Enabled but not implemented for v0 — marked NOT_RUN.")
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +146,8 @@ async def handle_preflight(context: WorkflowContext) -> str:
         recommended_next_action,
         run_preflight,
     )
+    from app.workflow_engine.state_machine import publish_event
+    await publish_event(context.migration_id, "PREFLIGHT", "started", "Preflight started.")
 
     # Load target architecture from Redis metadata before build system generation
     try:
@@ -158,6 +160,34 @@ async def handle_preflight(context: WorkflowContext) -> str:
             context.target_gpu_architecture = target_arch
     except Exception as exc:
         logger.warning("[PREFLIGHT] Failed to read migration metadata: %s", exc)
+
+    # ── Architecture advisor ──────────────────────────────────────────────────
+    # Runs after user arch is loaded from Redis; never overrides user selection.
+    from app.compiler.architecture_advisor import advise as _advise_arch
+    from app.config.settings import settings as _settings
+    _configured_default = getattr(_settings, "DEFAULT_TARGET_ARCH", None)
+    _user_arch = context.target_gpu_architecture if context.target_gpu_architecture != "gfx90a" else None
+    try:
+        _advice = _advise_arch(
+            user_arch=_user_arch,
+            configured_default=_configured_default,
+            workspace_path=context.workspace_path,
+        )
+        # Only update arch from advisor if user did not provide one
+        if _user_arch is None:
+            context.target_gpu_architecture = _advice.selected_arch
+        context.architecture_advice = _advice.to_dict()
+        context.architecture_confidence = _advice.confidence
+        context.architecture_warnings = _advice.risk_warnings + _advice.recommended_actions
+        context.architecture_selection_source = _advice.selection_source
+        logger.info(
+            "[PREFLIGHT] Architecture advisor: arch=%s source=%s confidence=%s hints=%s risks=%d",
+            _advice.selected_arch, _advice.selection_source, _advice.confidence,
+            _advice.cuda_arch_hints, len(_advice.risk_warnings),
+        )
+    except Exception as _adv_exc:
+        logger.warning("[PREFLIGHT] Architecture advisor failed (non-fatal): %s", _adv_exc)
+    # ── End architecture advisor ──────────────────────────────────────────────
 
     logger.info("[PREFLIGHT] Running project scan and environment validation for %s", context.migration_id)
 
@@ -174,6 +204,8 @@ async def handle_preflight(context: WorkflowContext) -> str:
     workspace = Path(context.workspace_path)
     input_dir = workspace / "input"
     scan = scan_project(input_dir)
+    summary = project_summary_line(scan)
+    await publish_event(context.migration_id, "PREFLIGHT", "project_scanned", f"Project scanned: {summary}")
     context.project_scan = scan
     # Populate structured inventory for reporting
     context.project_inventory = scan.get("project_inventory") or {
@@ -390,10 +422,51 @@ async def handle_preflight(context: WorkflowContext) -> str:
         context.failure_reason = preflight_failure_message(report)
         context.last_compile_stderr = context.failure_reason
         context.recommended_next_action = recommended_next_action(context.error_category, report)
+        
+        has_compiler_fail = any(
+            cf.get("id") in ("hipcc", "docker_sdk", "docker_daemon", "docker_image", "docker_container_start")
+            for cf in critical_failures
+        )
+        if has_compiler_fail:
+            context.compiler_mode = "unavailable"
+            context.compile_status = "FAILED_SETUP"
+        else:
+            context.compiler_mode = "test-only" if settings.USE_MOCK_COMPILER else "real"
+            context.compile_status = "NOT_RUN"
+            
+        from app.compiler.validation_confidence import compute_confidence
+        level, reason = compute_confidence(
+            hipify_ok=False,
+            compile_ok=False,
+            compiler_mocked=settings.USE_MOCK_COMPILER,
+            tools_missing=(context.compiler_mode == "unavailable")
+        )
+        context.validation_confidence = level
+        context.validation_confidence_reason = reason
+        
+        # Publish preflight failed event
+        await publish_event(
+            context.migration_id,
+            "PREFLIGHT",
+            "failed",
+            f"Preflight validation failed: {context.failure_reason}",
+            error_category=context.error_category,
+            main_error=context.failure_reason
+        )
         logger.error("[PREFLIGHT] Validation failed: %s", context.failure_reason)
         raise RuntimeError(context.failure_reason)
 
+    context.compiler_mode = "test-only" if settings.USE_MOCK_COMPILER else "real"
+    context.compile_status = "NOT_RUN"
     context.error_category = "NONE"
+    
+    # Publish preflight completed event
+    await publish_event(
+        context.migration_id,
+        "PREFLIGHT",
+        "completed",
+        f"Preflight validation passed. health_score={report.get('health_score')} readiness={report.get('readiness')}"
+    )
     logger.info(
         "[PREFLIGHT] Validation passed. health_score=%s readiness=%s",
         report.get("health_score"),
@@ -424,6 +497,9 @@ async def handle_hipify(context: WorkflowContext) -> str:
     to the GENERATING_REPORT (failure) path.
     """
     from app.compiler.hipify_runner import run_hipify
+    from app.workflow_engine.state_machine import publish_event
+
+    await publish_event(context.migration_id, "HIPIFY", "started", "HIP generation started.")
 
     workspace = Path(context.workspace_path)
     input_dir = workspace / "input"
@@ -448,6 +524,14 @@ async def handle_hipify(context: WorkflowContext) -> str:
             f"HIPIFY: no supported source file found in {input_dir}. "
             "Expected at least one .cu / .hip / .cpp / .cuh file."
         )
+
+    await publish_event(
+        context.migration_id,
+        "HIPIFY",
+        "file_discovered",
+        f"Discovered {len(source_files)} source files for translation.",
+        file_paths=[str(p.relative_to(input_dir)).replace("\\", "/") for p in source_files]
+    )
 
     # Copy all other non-supported files directly to the generated directory
     import shutil
@@ -570,6 +654,13 @@ async def handle_hipify(context: WorkflowContext) -> str:
                 status="skipped",
                 reason="existing_hip_file"
             )
+            await publish_event(
+                context.migration_id,
+                "HIPIFY",
+                "hipify_completed",
+                f"HIP file written (preserved): {rel_dest_str}",
+                file_path=rel_dest_str
+            )
             continue
             
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -639,6 +730,13 @@ async def handle_hipify(context: WorkflowContext) -> str:
             generated_path=rel_dest_str,
             stage="HIPIFY",
             status="generated"
+        )
+        await publish_event(
+            context.migration_id,
+            "HIPIFY",
+            "hipify_completed",
+            f"HIP file written: {rel_dest_str}",
+            file_path=rel_dest_str
         )
 
     context.hipify_output_path = primary_output_path
@@ -785,7 +883,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
     Falls back to the first .hip file in generated/ if not set.
 
     Stores results in:
-        context.compilation_success  — True if exit code == 0
+                context.compilation_success  — True if exit code == 0
         context.compiler_errors      — List[CompilerError] on failure
         context.last_compile_stderr  — Raw stderr string
 
@@ -794,6 +892,8 @@ async def handle_compiling(context: WorkflowContext) -> str:
     reads to determine the next transition (ANALYZING vs GENERATING_REPORT).
     """
     from app.compiler.hipcc_runner import run_hipcc
+    from app.workflow_engine.state_machine import publish_event
+    await publish_event(context.migration_id, "COMPILING", "started", "Compile validation started.")
 
     workspace = Path(context.workspace_path)
     generated_dir = workspace / "generated"
@@ -930,6 +1030,16 @@ async def handle_compiling(context: WorkflowContext) -> str:
     except Exception as exc:
         logger.warning("[COMPILING] Failed to read target architecture from Redis: %s", exc)
 
+    is_makefile = Path(hip_source).name.lower() in ("makefile", "makefile.hipforge")
+    cmd_str = "make" if is_makefile else f"hipcc {hip_source} -o {binary_path} --offload-arch={target_arch or 'gfx90a'}"
+    await publish_event(
+        context.migration_id,
+        "COMPILING",
+        "compile_command_generated",
+        "Compile command generated.",
+        compile_command=cmd_str
+    )
+
     result = run_hipcc(hip_source, binary_path, target_arch=target_arch, workspace_path=context.workspace_path)
 
     # Stream compile output to client over WebSocket via compiler_channel Redis channel
@@ -1060,6 +1170,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
     context.compilation_success = comp_ok
     context.compiler_errors = compiler_errors
     context.last_compile_stderr = last_stderr
+    context.compile_status = "PASSED" if comp_ok else "FAILED"
 
     # ── Update file lifecycle metadata & publish log events ─────────────
     try:
@@ -1087,7 +1198,8 @@ async def handle_compiling(context: WorkflowContext) -> str:
     level, reason = compute_confidence(
         hipify_ok=hipify_ok,
         compile_ok=comp_ok,
-        compiler_mocked=settings.USE_MOCK_COMPILER
+        compiler_mocked=settings.USE_MOCK_COMPILER,
+        tools_missing=(getattr(context, "compiler_mode", "real") == "unavailable")
     )
     context.validation_confidence = level
     context.validation_confidence_reason = reason
@@ -1130,6 +1242,33 @@ async def handle_compiling(context: WorkflowContext) -> str:
     else:
         context.error_category = "NONE"
 
+    # Publish compilation outcome events
+    if comp_ok:
+        await publish_event(
+            context.migration_id,
+            "COMPILING",
+            "compile_passed",
+            "Compile validation passed successfully."
+        )
+    else:
+        await publish_event(
+            context.migration_id,
+            "COMPILING",
+            "compile_failed",
+            f"Compile validation failed: {last_stderr[:200]}",
+            main_error=last_stderr,
+            error_category=context.error_category
+        )
+        if context.error_category == "DEPENDENCY_ERROR":
+            await publish_event(
+                context.migration_id,
+                "COMPILING",
+                "dependency_error_detected",
+                f"Dependency error: {context.recommended_next_action}",
+                error_category="DEPENDENCY_ERROR",
+                main_error=last_stderr
+            )
+
     if context.compilation_success:
         logger.info("[COMPILING] Compilation succeeded on attempt %d.", attempt_num)
         # If compilation succeeded and we had patches, save the patches to cache
@@ -1161,6 +1300,9 @@ async def handle_analyzing(context: WorkflowContext) -> str:
     """
     Runs the Analysis Agent on the most recent compilation failure.
     """
+    from app.workflow_engine.state_machine import publish_event
+    await publish_event(context.migration_id, "ANALYZING", "started", "AI repair loop started.")
+
     # ── Safeguards ──────────────────────────────────────────────────────────
     stderr_val = context.last_compile_stderr or ""
     
@@ -1221,6 +1363,16 @@ async def handle_analyzing(context: WorkflowContext) -> str:
                 "Upload the full project folder or include the file/library that defines the missing symbol."
             )
 
+        # Publish AI repair skipped event
+        await publish_event(
+            context.migration_id,
+            "ANALYZING",
+            "ai_repair_skipped",
+            f"AI repair skipped: {context.recommended_next_action or 'Non-code error detected.'}",
+            error_category=classification,
+            main_error=stderr_val
+        )
+
         # Store lesson so future runs skip faster
         await store_lesson(
             redis_client,
@@ -1244,6 +1396,15 @@ async def handle_analyzing(context: WorkflowContext) -> str:
                 "root_cause": f"Unsupported GPU architecture: {stderr_val[:200]}",
                 "repair_plan": []
             }
+            # Publish AI repair skipped event
+            await publish_event(
+                context.migration_id,
+                "ANALYZING",
+                "ai_repair_skipped",
+                "AI repair skipped: Unsupported GPU architecture.",
+                error_category=classification,
+                main_error=stderr_val
+            )
             await store_lesson(
                 redis_client,
                 category=classification,
@@ -1286,6 +1447,15 @@ async def handle_analyzing(context: WorkflowContext) -> str:
             "root_cause": "Compilation failed with the exact same error twice in a row. Infinite loop prevented.",
             "repair_plan": []
         }
+        # Publish AI repair failed event
+        await publish_event(
+            context.migration_id,
+            "ANALYZING",
+            "ai_repair_failed",
+            "AI repair failed: Identical compile error repeated twice in a row.",
+            error_category="MIGRATION_ERROR",
+            main_error=stderr_val
+        )
         # Store lesson so future runs immediately skip
         from app.redis.client import redis_client
         from app.learning.lesson_storage import store_lesson
@@ -1686,17 +1856,38 @@ async def handle_generating_report(context: WorkflowContext) -> str:
         generate_markdown_report,
         generate_json_report,
         generate_git_patch,
-        build_zip
+        build_zip,
+        write_history_summary,
     )
+    from app.workflow_engine.state_machine import publish_event
+    await publish_event(context.migration_id, "GENERATING_REPORT", "started", "Report generation started.")
     
     logger.info("[GENERATING_REPORT] Commencing report generation...")
     migration_id = context.migration_id
     
     try:
+        # Publish AI repair failed if compilation failed and budget was exhausted
+        if not getattr(context, "compilation_success", False):
+            from app.compiler.diagnostics_rules import get_skipped_ai_repair_reason
+            skipped_reason = get_skipped_ai_repair_reason(context)
+            if not skipped_reason and getattr(context, "current_attempt", 0) >= getattr(context, "retry_budget", 5):
+                await publish_event(
+                    context.migration_id,
+                    "ANALYZING",
+                    "ai_repair_failed",
+                    "AI repair failed. Budget exhausted.",
+                    error_category=getattr(context, "error_category", "COMPILATION_ERROR"),
+                    main_error=getattr(context, "last_compile_stderr", "")
+                )
+
         await generate_markdown_report(migration_id, context)
         await generate_json_report(migration_id, context)
         await generate_git_patch(migration_id)
         await build_zip(migration_id)
+        await write_history_summary(migration_id, context)
+        
+        await publish_event(context.migration_id, "GENERATING_REPORT", "completed", "Report generated successfully.")
+        
         from app.workflow_engine.state_machine import publish_log
         await publish_log(
             migration_id=context.migration_id,
@@ -1712,8 +1903,21 @@ async def handle_generating_report(context: WorkflowContext) -> str:
 
 
 async def handle_completed(context: WorkflowContext) -> str:
+    from app.workflow_engine.state_machine import publish_event
+    await publish_event(context.migration_id, "COMPLETED", "completed", "Workflow completed successfully.")
     return None
 
 
 async def handle_failed(context: WorkflowContext) -> str:
+    from app.workflow_engine.state_machine import publish_event
+    from app.services.report_service import write_history_summary
+    await publish_event(
+        context.migration_id,
+        "FAILED",
+        "failed",
+        f"Workflow failed: {getattr(context, 'failure_reason', 'unknown error')}",
+        error_category=getattr(context, "error_category", "UNKNOWN_ERROR"),
+        main_error=getattr(context, "failure_reason", "")
+    )
+    await write_history_summary(context.migration_id, context, failed=True)
     return None

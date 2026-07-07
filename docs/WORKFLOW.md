@@ -77,4 +77,6 @@ graph TD
 ### Stage 7: Reporting & Export Packaging (`GENERATING_REPORT` & `COMPLETE`/`FAILED`)
 - **Actions**: Generates `reports/migration_report.md`, `reports/migration_report.json`, and `reports/git_patch.diff` (unified diff comparing original files against final generated files).
 - **Zipping**: Packages all workspace files into `exports/HIPForge_Migration.zip`.
+- **History Summary**: Writes a lightweight durable history summary JSON to `workspace/history/<job_id>.json` representing the final result of the workflow. If the workflow aborted in an early failure (e.g. `FAILED`), a minimal history summary is still written.
 - **Final Status**: Transition to `COMPLETED` if final compilation succeeded, or `FAILED` if retries were exhausted or preflight checks aborted.
+

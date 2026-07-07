@@ -106,6 +106,13 @@ All migration records are stored in a downloadable ZIP archive located at `works
 - **`reports/migration_report.json`**: Structured machine-readable JSON summary.
 - **`reports/git_patch.diff`**: Unified git-compatible diff comparing input files against generated code.
 
+### Durable Migration History
+Previous migrations can be listed and inspected using a file-backed history system stored at:
+- **`workspace/history/<job_id>.json`**: A lightweight, durable history summary written when a migration completes or encounters a terminal failure.
+
+This history does not rely on Redis (which is for active/live state) or a database. It is resolved directly from files. Detailed logs remain in the main report directories.
+
+
 ---
 
 ## 7. Validation Confidence Ladder

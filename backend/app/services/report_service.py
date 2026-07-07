@@ -90,11 +90,60 @@ def get_skipped_ai_repair_reason(context: Any) -> Optional[str]:
     return "Skipped: no compile failure encountered."
 
 
+async def _recalculate_validation_confidence(context: Any) -> None:
+    from app.compiler.validation_confidence import compute_confidence
+    from app.config.settings import settings
+
+    compiler_mode = getattr(context, "compiler_mode", "real")
+    compile_status = getattr(context, "compile_status", "NOT_RUN")
+    
+    hipify_ok = bool(getattr(context, "hipify_output_path", None))
+    compile_ok = getattr(context, "compilation_success", False)
+    
+    tools_missing = (compiler_mode == "unavailable")
+    if compile_status == "FAILED_SETUP":
+        tools_missing = True
+        
+    runtime_ok = (getattr(context, "runtime_validation_status", "NOT_RUN") == "PASSED")
+    profiled = (getattr(context, "profiling_status", "NOT_RUN") == "PASSED")
+    
+    level, reason = compute_confidence(
+        hipify_ok=hipify_ok,
+        compile_ok=compile_ok,
+        runtime_ok=runtime_ok,
+        profiled=profiled,
+        compiler_mocked=(compiler_mode == "test-only" or settings.USE_MOCK_COMPILER),
+        tools_missing=tools_missing
+    )
+    context.validation_confidence = level
+    context.validation_confidence_reason = reason
+
+    # Save fields to Redis metadata
+    try:
+        from app.redis.keys import metadata_key
+        m_key = metadata_key(context.migration_id)
+        await redis_client.hset(
+            m_key,
+            mapping={
+                "validation_confidence": level,
+                "validation_confidence_reason": reason,
+                "compiler_mode": compiler_mode,
+                "compile_status": compile_status,
+                "runtime_validation_status": getattr(context, "runtime_validation_status", "NOT_RUN"),
+                "last_compile_command": getattr(context, "last_compile_command", ""),
+                "failure_reason": getattr(context, "failure_reason", "") or "",
+                "main_error": getattr(context, "main_error", "") or getattr(context, "last_compile_stderr", "") or ""
+            }
+        )
+    except Exception as exc:
+        logger.warning("[ReportService] Failed to save recalculated metadata to Redis: %s", exc)
+
 async def generate_markdown_report(migration_id: str, context: Any) -> None:
     """
     Generates reports/migration_report.md summarizing the migration session,
     metrics, compiler history, and AI activities.
     """
+    await _recalculate_validation_confidence(context)
     workspace_path = get_workspace_path(migration_id)
     reports_dir = workspace_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -165,9 +214,12 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Start Time**: `{start_time}`",
         f"- **End Time**: `{now_str}`",
         f"- **Target GPU Architecture**: `{getattr(context, 'target_gpu_architecture', 'gfx90a')}`",
+        f"- **Architecture Selection Source**: `{getattr(context, 'architecture_selection_source', 'unknown')}`",
+        f"- **Architecture Confidence**: `{getattr(context, 'architecture_confidence', 'LOW')}`",
         f"- **Retry Budget**: `{getattr(context, 'retry_budget', 0)}`",
         f"- **Actual Retries**: `{actual_retries}`",
         f"",
+
         f"## 2. Environment Summary",
         f"- **Pre-flight Status**: `{preflight_report.get('overall_status', 'not recorded')}`",
         f"- **Health Score**: `{preflight_report.get('health_score', 'n/a')}`",
@@ -184,7 +236,26 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"## 4. Input Project Details",
         f"- **Original Files Uploaded**:"
     ]
-    
+
+    # ── Architecture Advice Section ──────────────────────────────────────────
+    arch_advice = getattr(context, "architecture_advice", {}) or {}
+    cuda_hints = arch_advice.get("cuda_arch_hints", [])
+    arch_risk_warnings = arch_advice.get("risk_warnings", [])
+    arch_recommended = arch_advice.get("recommended_actions", [])
+    if cuda_hints or arch_risk_warnings or arch_recommended:
+        lines.append(f"## 3b. Architecture Advisor")
+        if cuda_hints:
+            lines.append(f"- **CUDA Arch Hints Found**: {', '.join(f'`{h}`' for h in cuda_hints)}")
+        if arch_risk_warnings:
+            lines.append(f"- **Risk Warnings** ({len(arch_risk_warnings)}):")
+            for w in arch_risk_warnings:
+                lines.append(f"  - {w}")
+        if arch_recommended:
+            lines.append(f"- **Advisor Notes**:")
+            for n in arch_recommended:
+                lines.append(f"  - {n}")
+        lines.append(f"")
+
     project_inventory = getattr(context, "project_inventory", None) or {}
     if project_inventory:
         lines.extend([
@@ -384,6 +455,35 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         for api, count in remaining_apis.items():
             lines.append(f"    - `{api}`: {count} occurrence(s)")
 
+    from app.config.settings import settings
+    ai_mode = "mock" if settings.USE_MOCK_AI else "real"
+    ai_repair_status = "not_needed"
+    if getattr(context, "compilation_success", False) and getattr(context, "current_attempt", 0) <= 1:
+        ai_repair_status = "not_needed"
+    elif get_skipped_ai_repair_reason(context):
+        ai_repair_status = "skipped"
+    elif getattr(context, "compilation_success", False):
+        ai_repair_status = "repaired"
+    else:
+        ai_repair_status = "failed"
+        
+    final_workflow_state = getattr(context, "current_state", "COMPLETED")
+    compiler_mode = getattr(context, "compiler_mode", "real")
+    compile_status = getattr(context, "compile_status", "NOT_RUN")
+    generated_artifact_path = f"exports/{migration_id}.zip"
+
+    lines.extend([
+        f"",
+        f"## 11. Pipeline Configuration & Metadata",
+        f"- **Final Workflow State**: `{final_workflow_state}`",
+        f"- **Compiler Mode**: `{compiler_mode}`",
+        f"- **Compile Status**: `{compile_status}`",
+        f"- **AI Mode**: `{ai_mode}`",
+        f"- **AI Repair Status**: `{ai_repair_status}`",
+        f"- **Generated Artifact Path**: `{generated_artifact_path}`",
+        f"- **Report Generated Timestamp**: `{now_str}`",
+    ])
+
     try:
         report_file.write_text("\n".join(lines), encoding="utf-8")
         logger.info("[ReportService] Markdown report generated: %s", report_file)
@@ -396,6 +496,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     Generates reports/migration_report.json containing all structured data fields
     defined in docs/17_REPORT_GENERATOR.md.
     """
+    await _recalculate_validation_confidence(context)
     workspace_path = get_workspace_path(migration_id)
     reports_dir = workspace_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -431,7 +532,10 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "target_gpu_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
         "retry_budget": getattr(context, "retry_budget", 0),
         "actual_retries": actual_retries,
-        "migration_mode": getattr(context, "migration_mode", "Balanced")
+        "migration_mode": getattr(context, "migration_mode", "Balanced"),
+        "architecture_selection_source": getattr(context, "architecture_selection_source", "unknown"),
+        "architecture_confidence": getattr(context, "architecture_confidence", "LOW"),
+        "architecture_advice": getattr(context, "architecture_advice", {}),
     }
 
     # 2. Input Project Details
@@ -567,6 +671,42 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "performance_profiling": {}
     }
 
+    # AI Mode & repair status
+    from app.config.settings import settings
+    ai_mode = "mock" if settings.USE_MOCK_AI else "real"
+    ai_repair_status = "not_needed"
+    if getattr(context, "compilation_success", False) and getattr(context, "current_attempt", 0) <= 1:
+        ai_repair_status = "not_needed"
+    elif get_skipped_ai_repair_reason(context):
+        ai_repair_status = "skipped"
+    elif getattr(context, "compilation_success", False):
+        ai_repair_status = "repaired"
+    else:
+        ai_repair_status = "failed"
+        
+    final_workflow_state = getattr(context, "current_state", "COMPLETED")
+    compiler_mode = getattr(context, "compiler_mode", "real")
+    compile_status = getattr(context, "compile_status", "NOT_RUN")
+    generated_artifact_path = f"exports/{migration_id}.zip"
+
+    # Inject required fields at the top-level
+    report_data["final_workflow_state"] = final_workflow_state
+    report_data["target_architecture"] = getattr(context, "target_gpu_architecture", "gfx90a")
+    report_data["input_kind"] = project_scan_json.get("input_kind", "unknown")
+    report_data["build_system"] = project_scan_json.get("build_system", "none")
+    report_data["compiler_mode"] = compiler_mode
+    report_data["compile_command"] = getattr(context, "last_compile_command", "")
+    report_data["compile_status"] = compile_status
+    report_data["validation_confidence_level"] = getattr(context, "validation_confidence", "LOW")
+    report_data["runtime_validation_status_val"] = getattr(context, "runtime_validation_status", "NOT_RUN")
+    report_data["ai_mode"] = ai_mode
+    report_data["ai_repair_status"] = ai_repair_status
+    report_data["main_error_val"] = getattr(context, "main_error", "") or getattr(context, "last_compile_stderr", "") or ""
+    report_data["error_category_val"] = getattr(context, "error_category", "NONE")
+    report_data["recommended_next_action_val"] = next_action
+    report_data["generated_artifact_path"] = generated_artifact_path
+    report_data["report_generated_timestamp"] = now_str
+
     report_data["environment_summary"] = {
         "preflight_status": preflight_report.get("overall_status"),
         "health_score": preflight_report.get("health_score"),
@@ -689,6 +829,92 @@ async def generate_git_patch(migration_id: str) -> None:
         logger.info("[ReportService] Git patch generated: %s", patch_file)
     except Exception as exc:
         logger.error("[ReportService] Failed to write git patch: %s", exc)
+
+
+async def write_history_summary(migration_id: str, context: Any, *, failed: bool = False) -> None:
+    """
+    Writes a lightweight durable history summary to workspace/history/<migration_id>.json.
+
+    Called after report generation (normal path) or on terminal failure.
+    Never raises — history write must not abort report generation.
+
+    ponytail: flat history/ dir at workspace root so list = one glob, no date-tree traversal.
+    """
+    root_path_str = os.getenv("WORKSPACE_PATH") or "workspace"
+    history_dir = Path(root_path_str) / "history"
+    try:
+        history_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        logger.error("[HistoryService] Cannot create history dir: %s", exc)
+        return
+
+    history_file = history_dir / f"{migration_id}.json"
+
+    now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    workspace_path = get_workspace_path(migration_id)
+    report_md_path = str(workspace_path / "reports" / "migration_report.md")
+    report_json_path = str(workspace_path / "reports" / "migration_report.json")
+    artifact_path = str(workspace_path / "exports" / "HIPForge_Migration.zip")
+
+    # Gather input file metadata without reading file contents
+    input_dir = workspace_path / "input"
+    input_name = None
+    input_kind = "unknown"
+    file_count = 0
+    if input_dir.exists():
+        files = [f for f in input_dir.iterdir() if f.is_file()]
+        file_count = len(files)
+        if files:
+            input_name = files[0].name
+
+    project_scan = getattr(context, "project_scan", None) or {}
+    if not input_kind or input_kind == "unknown":
+        input_kind = project_scan.get("input_kind") or project_scan.get("category") or "unknown"
+
+    # Count generated files
+    generated_dir = workspace_path / "generated"
+    generated_file_count = 0
+    if generated_dir.exists():
+        generated_file_count = sum(1 for f in generated_dir.rglob("*") if f.is_file())
+
+    main_error = getattr(context, "main_error", "") or ""
+    if not main_error:
+        main_error = (getattr(context, "failure_reason", "") or "")[:500]
+
+    final_state = "FAILED" if (failed or getattr(context, "current_state", None) == "FAILED") else "COMPLETED"
+
+    summary = {
+        "job_id": migration_id,
+        "created_at": getattr(context, "start_time", now_str),
+        "finished_at": now_str,
+        "input_name": input_name,
+        "input_kind": input_kind,
+        "target_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
+        "architecture_selection_source": getattr(context, "architecture_selection_source", "unknown"),
+        "final_state": final_state,
+        "compile_status": getattr(context, "compile_status", "NOT_RUN"),
+        "validation_confidence": getattr(context, "validation_confidence", "LOW"),
+        "runtime_validation_status": getattr(context, "runtime_validation_status", "NOT_RUN"),
+        "translation_analysis_status": "DONE" if getattr(context, "sca_result", None) else "NOT_RUN",
+        "error_category": getattr(context, "error_category", "NONE") or "NONE",
+        "main_error": main_error[:500] if main_error else None,
+        "next_action": getattr(context, "recommended_next_action", "") or None,
+        "report_md_path": report_md_path,
+        "report_json_path": report_json_path,
+        "artifact_path": artifact_path,
+        "file_count": file_count,
+        "generated_file_count": generated_file_count,
+        # Truthful missing-file flags resolved at write time
+        "report_missing": failed or not Path(report_md_path).exists(),
+        "artifact_missing": failed or not Path(artifact_path).exists(),
+    }
+
+    try:
+        with open(history_file, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        logger.info("[HistoryService] History summary written: %s", history_file)
+    except Exception as exc:
+        logger.error("[HistoryService] Failed to write history summary: %s", exc)
 
 
 async def build_zip(migration_id: str) -> None:

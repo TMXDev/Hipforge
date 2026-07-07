@@ -13,12 +13,9 @@ import requests
 import websockets
 
 try:
-    import readline
+    import readline  # noqa: F401 – tab-complete in interactive shell; optional
 except ImportError:
-    try:
-        import pyreadline as readline
-    except ImportError:
-        readline = None
+    readline = None  # ponytail: no pyreadline fallback; it can hang on Windows
 
 # ANSI colors for premium terminal UI
 class Colors:
@@ -146,14 +143,19 @@ def print_diagnostic_report(report: dict, verbose: bool = False):
             label = (check.get("status") or "").upper()
             print(f"  {color}[{label}]{Colors.ENDC} {check.get('name')}: {check.get('message')}")
 
-def run_doctor_command(host_url: str, remote: bool = False, json_output: bool = False, verbose: bool = False) -> bool:
+def run_doctor_command(host_url: str, local: bool = False, json_output: bool = False, verbose: bool = False) -> bool:
+    # ponytail: default is remote (backend truth); --local runs preflight on this machine
     report = None
-    if not remote:
+    if local:
         run_preflight, _ = _load_backend_diagnostics()
         if run_preflight:
+            print_step("[local] Running preflight diagnostics on this machine...")
             report = run_preflight()
+        else:
+            print_warn("[local] Backend diagnostics module not available; falling back to HTTP endpoint.")
 
     if report is None:
+        print_step(f"Checking backend health at {host_url} ...")
         response = requests.get(f"{host_url}/api/v1/health/check", timeout=120)
         response.raise_for_status()
         report = response.json()
@@ -197,6 +199,54 @@ def run_self_test_command(host_url: str, target_arch: str | None = None, remote:
         print_self_test_report(report, verbose=verbose)
 
     return bool(report.get("success"))
+
+def run_history_command(host_url: str, limit: int = 20, job_id: str | None = None) -> bool:
+    """Fetches and prints migration history from the backend API."""
+    try:
+        if job_id:
+            url = f"{host_url}/api/v1/migrations/history/{job_id}"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 404:
+                print_fail(f"No history entry found for: {job_id}")
+                return False
+            resp.raise_for_status()
+            data = resp.json()
+            print(f"\n{Colors.BOLD}{Colors.GOLD}=== Migration History Detail ==={Colors.ENDC}")
+            for k, v in data.items():
+                print(f"  {Colors.BOLD}{k}{Colors.ENDC}: {v}")
+            if data.get("report_missing"):
+                print_warn("Report file is missing or was not generated.")
+            if data.get("artifact_missing"):
+                print_warn("Artifact ZIP is missing or was not generated.")
+        else:
+            url = f"{host_url}/api/v1/migrations/history?limit={limit}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            items = resp.json()
+            if not items:
+                print_warn("No migration history found.")
+                return True
+            print(f"\n{Colors.BOLD}{Colors.GOLD}=== Migration History (newest first) ==={Colors.ENDC}")
+            for item in items:
+                state_color = Colors.GREEN if (item.get("compile_status") or "").upper() == "PASSED" else Colors.FAIL
+                main_err = item.get("main_error") or ""
+                err_str = f" | err: {main_err[:60]}" if main_err else ""
+                missing = " [report missing]" if item.get("report_missing") else ""
+                print(
+                    f"  {Colors.BOLD}{item.get('job_id')}{Colors.ENDC} "
+                    f"| {(item.get('finished_at') or '')[:19]} "
+                    f"| arch={item.get('target_architecture')} "
+                    f"| state={item.get('final_state')} "
+                    f"| compile={state_color}{item.get('compile_status')}{Colors.ENDC} "
+                    f"| conf={item.get('validation_confidence')}"
+                    f"{err_str}{Colors.DARK_GRAY}{missing}{Colors.ENDC}"
+                )
+            print()
+        return True
+    except requests.RequestException as exc:
+        print_fail(f"History API unavailable: {exc}")
+        return False
+
 
 def zip_project(project_path: Path) -> Path:
     """Zips the target project path recursively into a temporary file.
@@ -427,15 +477,28 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
             final_status = await stream_logs(host_url, migration_id)
         
         if not final_status:
-            print_step("Connection closed. Querying final status...")
+            # ponytail: WS dropped — poll until terminal state or timeout; ceiling = HIPFORGE_POLL_TIMEOUT seconds
+            try:
+                poll_timeout = int(os.getenv("HIPFORGE_POLL_TIMEOUT", "300"))
+            except ValueError:
+                poll_timeout = 300
+            _TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
+            print_warn("Live event stream disconnected. Falling back to status polling...")
             status_url = f"{host_url}/api/v1/migrate/{migration_id}/status"
-            for _ in range(5):
-                poll_resp = requests.get(status_url)
-                if poll_resp.status_code == 200:
-                    final_status = poll_resp.json().get("status")
-                    if final_status and final_status.upper() in ("COMPLETED", "FAILED"):
-                        break
-                await asyncio.sleep(2)
+            elapsed = 0
+            interval = 5
+            while elapsed < poll_timeout:
+                try:
+                    poll_resp = requests.get(status_url, timeout=10)
+                    if poll_resp.status_code == 200:
+                        final_status = poll_resp.json().get("status", "")
+                        if (final_status or "").upper() in _TERMINAL:
+                            break
+                        print(f"  Polling... status={final_status or 'pending'} ({elapsed}s elapsed)", flush=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(interval)
+                elapsed += interval
                 
         if final_status and final_status.upper() == "COMPLETED":
             download_and_extract(host_url, migration_id, output_path)
@@ -490,69 +553,33 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
         project_scan = detail.get("project_scan", {}) if isinstance(detail.get("project_scan"), dict) else {}
         if project_scan:
             build_strategy = project_scan.get("compile_strategy", "")
-        if not build_strategy:
-            for e in journal:
-                ps = e.get("project_scan")
-                if isinstance(ps, dict) and ps.get("compile_strategy"):
-                    build_strategy = ps.get("compile_strategy")
-                    break
 
-        print(f"\n{Colors.BOLD}{Colors.GOLD}====================================={Colors.ENDC}")
-        print(f"{Colors.BOLD}{Colors.GOLD}  HIPForge Migration Summary{Colors.ENDC}")
-        print(f"{Colors.BOLD}{Colors.GOLD}====================================={Colors.ENDC}")
-        print(f"  {Colors.BOLD}Job ID:{Colors.ENDC}              {migration_id}")
-        print(f"  {Colors.BOLD}Terminal Status:{Colors.ENDC}     {terminal_status}")
-        print(f"  {Colors.BOLD}Architecture:{Colors.ENDC}        {target_arch}")
-        if build_strategy:
-            print(f"  {Colors.BOLD}Build Strategy:{Colors.ENDC}     {build_strategy}")
-        print(f"  {Colors.BOLD}Repair Budget:{Colors.ENDC}       {retry_budget}")
-        print(f"  {Colors.BOLD}Compile Attempts:{Colors.ENDC}    {compile_attempts}")
-        print(f"  {Colors.BOLD}AI Repair Cycles:{Colors.ENDC}    {repair_cycles}")
-        if error_category and error_category not in ("NONE", "MIGRATION_ERROR"):
-            print(f"  {Colors.BOLD}Error Category:{Colors.ENDC}     {error_category}")
-        if failed_stage:
-            print(f"  {Colors.BOLD}Failed Stage:{Colors.ENDC}       {failed_stage}")
-        if main_error:
-            print(f"  {Colors.BOLD}Main Error:{Colors.ENDC}        {main_error[:200]}")
+        compiler_mode = detail.get("compiler_mode") or "real"
+        compile_status = detail.get("compile_status") or "NOT_RUN"
+        val_confidence = detail.get("validation_confidence") or "LOW"
+        runtime_val = detail.get("runtime_validation_status") or "NOT_RUN"
+        main_err = detail.get("main_error") or main_error or ""
+        next_act = detail.get("recommended_next_action") or ""
+        report_path = f"workspace/{migration_id}/reports/migration_report.md"
 
-        # ponytail: print stage timings if available
-        timings = detail.get("stage_timings")
-        if timings:
-            print(f"  {Colors.BOLD}Stage Timings:{Colors.ENDC}")
-            for stage_name, stage_dur in timings.items():
-                print(f"    - {stage_name}: {stage_dur}s")
-
-        if error_category == "PROJECT_TOO_LARGE":
-            print(f"  {Colors.BOLD}Project too large:{Colors.ENDC} {Colors.FAIL}YES{Colors.ENDC}")
-            print(f"  {Colors.BOLD}Recommended Action:{Colors.ENDC} {detail.get('recommended_next_action') or 'Extract and migrate folder by folder.'}")
-
-        # Did AI repair run?
-        ai_events = [e for e in journal if e.get("workflow_state") in ("ANALYZING", "PATCHING", "RESEARCHING")]
-        if ai_events:
-            print(f"  {Colors.BOLD}AI Repair:{Colors.ENDC}         Entered ({len(ai_events)} event(s))")
-            last = ai_events[-1]
-            if last.get("analysis_summary") or last.get("patch_summary"):
-                summary = (last.get("analysis_summary") or last.get("patch_summary") or "")[:120]
-                print(f"  {Colors.BOLD}  Last Event:{Colors.ENDC}    {summary}")
-        else:
-            # Show why repair was skipped
-            skip_reason = detail.get("error_category") or ""
-            if not skip_reason:
-                for e in reversed(journal):
-                    cat = e.get("error_category") or ""
-                    if cat and cat != "NONE":
-                        skip_reason = cat
-                        break
-            if skip_reason:
-                print(f"  {Colors.BOLD}AI Repair:{Colors.ENDC}         Skipped ({skip_reason})")
-            else:
-                print(f"  {Colors.BOLD}AI Repair:{Colors.ENDC}         Did not enter")
-
-        report_url = f"{host_url}/api/v1/migrate/{migration_id}/download"
-        if final_status and final_status.upper() == "COMPLETED":
-            print(f"  {Colors.BOLD}Artifact:{Colors.ENDC}         {output_path.resolve()}")
-        print(f"  {Colors.BOLD}Report:{Colors.ENDC}           {report_url}")
-        print(f"{Colors.BOLD}{Colors.GOLD}====================================={Colors.ENDC}\n")
+        print(f"\n{Colors.BOLD}{Colors.GOLD}Migration Summary{Colors.ENDC}")
+        print(f"Job ID: {migration_id}")
+        print(f"Target architecture: {target_arch}")
+        print(f"Final state: {terminal_status}")
+        print(f"Compiler mode: {compiler_mode}")
+        print(f"Compiler validation: {compile_status}")
+        print(f"Validation confidence: {val_confidence}")
+        print(f"Runtime validation: {runtime_val}")
+        if main_err:
+            print(f"Main error: {main_err}")
+        if error_category and error_category != "NONE":
+            print(f"Error category: {error_category}")
+        if next_act:
+            print(f"Next action: {next_act}")
+        print(f"Report: {report_path}")
+        if terminal_status.upper() == "COMPLETED" and compile_status.upper() == "PASSED":
+            artifact_dir = output_path / migration_id
+            print(f"Artifact: {artifact_dir.resolve()}")
 
     finally:
         if zip_file and zip_file.exists() and zip_file != project_path:
@@ -668,10 +695,10 @@ def run_interactive_cli():
             continue
             
         if line.lower() == "/history":
-            if not migration_history:
-                print_warn("No migrations run in this session yet.")
-            else:
-                print(f"\n{Colors.BOLD}{Colors.GOLD}=== Migration History ==={Colors.ENDC}")
+            # Try backend history API first; fall back to session list
+            fetched = run_history_command(default_host)
+            if not fetched and migration_history:
+                print(f"\n{Colors.BOLD}{Colors.GOLD}=== Session Migration History ==={Colors.ENDC}")
                 for idx, item in enumerate(migration_history, 1):
                     print(f"  [{idx}] ID: {item['id']} | Project: {item['project']} | Arch: {item['arch']}")
                 print()
@@ -685,10 +712,24 @@ def run_interactive_cli():
             
             # Ping backend
             try:
-                resp = requests.get(f"{default_host}/api/v1/migrate/upload", timeout=3)
-                # Upload accepts POST, GET will return 405 Method Not Allowed but means backend is online!
-                if resp.status_code in (200, 405):
+                resp = requests.get(f"{default_host}/api/v1/health/check", timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
                     print_success("Backend Server connection is ONLINE.")
+                    
+                    # Redis status
+                    redis_check = next((c for c in data.get("checks", []) if c.get("id") == "redis_reachable"), None)
+                    if redis_check and redis_check.get("status") == "pass":
+                        print_success("Redis Connectivity: ONLINE")
+                    else:
+                        print_fail("Redis Connectivity: OFFLINE")
+                        
+                    # Worker status
+                    worker_check = next((c for c in data.get("checks", []) if c.get("id") == "worker_reachable"), None)
+                    if worker_check and worker_check.get("status") == "pass":
+                        print_success("Migration Worker: ONLINE")
+                    else:
+                        print_warn("Migration Worker: OFFLINE (heartbeat not detected)")
                 else:
                     print_warn(f"Backend Server returned status code: {resp.status_code}")
             except Exception as e:
@@ -700,14 +741,14 @@ def run_interactive_cli():
             parts = shlex.split(line)
             doctor_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
             doctor_parser.add_argument("--host", type=str, default=default_host)
-            doctor_parser.add_argument("--remote", action="store_true")
+            doctor_parser.add_argument("--local", action="store_true")
             doctor_parser.add_argument("--json", action="store_true")
             doctor_parser.add_argument("--verbose", action="store_true")
             try:
                 doctor_args = doctor_parser.parse_args(parts[1:])
                 ok = run_doctor_command(
                     doctor_args.host,
-                    remote=doctor_args.remote,
+                    local=doctor_args.local,
                     json_output=doctor_args.json,
                     verbose=doctor_args.verbose,
                 )
@@ -903,8 +944,10 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command", help="CLI Subcommands")
     
-    # Subcommand: start
-    start_parser = subparsers.add_parser("start", help="Launch interactive Claude-like shell")
+    # Subcommand: start / shell / interactive  (all aliases → same behaviour)
+    start_parser = subparsers.add_parser("start", help="Launch interactive shell")
+    subparsers.add_parser("shell", help="Launch interactive shell (alias for start)")
+    subparsers.add_parser("interactive", help="Launch interactive shell (alias for start)")
     
     # Subcommand: migrate
     migrate_parser = subparsers.add_parser("migrate", help="Run direct migration (B2B/Non-interactive)")
@@ -915,9 +958,9 @@ def main():
     migrate_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL (default: http://localhost:8000)")
 
     # Subcommand: doctor
-    doctor_parser = subparsers.add_parser("doctor", help="Run full environment diagnostics")
-    doctor_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL for remote fallback")
-    doctor_parser.add_argument("--remote", action="store_true", help="Force using the backend health endpoint")
+    doctor_parser = subparsers.add_parser("doctor", help="Check backend server health (default). Use --local for this machine's toolchain.")
+    doctor_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL")
+    doctor_parser.add_argument("--local", action="store_true", help="Run preflight checks on this local machine instead of querying the backend")
     doctor_parser.add_argument("--json", action="store_true", help="Print raw JSON diagnostics")
     doctor_parser.add_argument("--verbose", action="store_true", help="Print every individual check")
 
@@ -928,19 +971,25 @@ def main():
     self_test_parser.add_argument("--remote", action="store_true", help="Force using the backend self-test endpoint")
     self_test_parser.add_argument("--json", action="store_true", help="Print raw JSON self-test output")
     self_test_parser.add_argument("--verbose", action="store_true", help="Print every self-test step")
+
+    # Subcommand: history
+    history_parser = subparsers.add_parser("history", help="List or inspect previous migrations")
+    history_parser.add_argument("--limit", type=int, default=20, help="Number of records to show (default: 20)")
+    history_parser.add_argument("--id", type=str, default=None, help="Inspect a specific migration by ID")
+    history_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL")
     
     args = parser.parse_args()
-    
-    if args.command == "start":
+
+    if args.command in ("start", "shell", "interactive"):
         run_interactive_cli()
     elif args.command == "migrate":
         project_path = Path(args.project_path)
         output_path = Path(args.output)
-        
+
         if not project_path.exists():
             print_fail(f"Error: Target path '{project_path}' does not exist.")
             sys.exit(1)
-            
+
         asyncio.run(
             run_migration(project_path, args.arch, output_path, args.host, args.attempts)
         )
@@ -948,9 +997,10 @@ def main():
         try:
             ok = run_doctor_command(
                 args.host,
-                remote=args.remote,
+                local=args.local,
                 json_output=args.json,
                 verbose=args.verbose,
+                
             )
         except Exception as e:
             print_fail(f"Doctor failed: {e}")
@@ -969,9 +1019,21 @@ def main():
             print_fail(f"Self-test failed: {e}")
             sys.exit(2)
         sys.exit(0 if ok else 1)
+    elif args.command == "history":
+        try:
+            ok = run_history_command(
+                args.host,
+                limit=args.limit,
+                job_id=args.id,
+            )
+        except Exception as e:
+            print_fail(f"History failed: {e}")
+            sys.exit(2)
+        sys.exit(0 if ok else 1)
     else:
-        # Default behavior: if no args or invalid subcommand, start interactive shell
-        run_interactive_cli()
+        # ponytail: no args / unknown subcommand → help and exit, not an interactive shell
+        parser.print_help()
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

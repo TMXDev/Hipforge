@@ -83,3 +83,12 @@ Every migration packages its outputs into an archive file: `workspace/<migration
 - `patches/`: Source edits produced by the Patch Agent.
 - `logs/`: Sequential compile logs (`compile_attempt_*.log`).
 - `reports/`: Markdown and JSON migration reports, and unified git patch diffs.
+
+---
+
+## 4. Durable Migration History
+HIPForge maintains a durable migration history system that persists after workflows terminate:
+- **Durable File Store**: Summaries are written to `workspace/history/<job_id>.json` on normal workflow completion or terminal failure.
+- **No Database Dependency**: History is entirely file-backed. Redis is used solely for active live-state tracking, and no external SQL/NoSQL database is introduced.
+- **On-Demand Validation**: Report and artifact availability (e.g. file existence) are checked dynamically at read time, making the API resilient to manual workspace deletions.
+

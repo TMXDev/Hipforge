@@ -143,15 +143,34 @@ Core settings available in `.env`:
 
 ## 💻 CLI Usage
 
-The CLI tool is located at `cli/hipforge.py`. You can execute commands within the backend container without setting up a Python virtual environment on your host:
+The CLI tool is located at `cli/hipforge.py`. Run it inside the backend container or via your local venv.
 
 ```bash
-# Verify environment checks
+# Print help and exit (no-args behaviour)
+python cli/hipforge.py
+
+# Check backend server health (default: queries the running backend)
 docker compose exec backend python cli/hipforge.py doctor
 
+# Check local machine toolchain instead (hipcc, hipify-clang, Redis on this host)
+docker compose exec backend python cli/hipforge.py doctor --local
+
 # Submit a migration job
-docker compose exec backend python cli/hipforge.py migrate workspace/input/kernel.cu --output workspace/demo_out --arch gfx942 --attempts 0
+docker compose exec backend python cli/hipforge.py migrate workspace/input/kernel.cu \
+  --output workspace/demo_out --arch gfx942 --attempts 0
+
+# List previous migration history (newest first)
+docker compose exec backend python cli/hipforge.py history --limit 10
+
+# Inspect detail of a specific migration by ID
+docker compose exec backend python cli/hipforge.py history --id <job_id>
+
+# Launch the interactive shell explicitly
+python cli/hipforge.py shell
 ```
+
+`doctor` always queries the **backend** by default, so it reflects remote/Docker toolchain truth.
+Use `--local` only when you want to verify the machine running the CLI itself.
 
 ---
 
