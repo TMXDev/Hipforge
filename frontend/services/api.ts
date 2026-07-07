@@ -4,7 +4,7 @@
  * Implements endpoints defined in docs/16_API_SPECIFICATION.md.
  */
 
-import type { MigrationResponse, MigrationStatus, JournalEntry, HealthReport, SelfTestReport } from "@/types/migration";
+import type { MigrationResponse, MigrationStatus, JournalEntry, HealthReport, SelfTestReport, MigrationHistoryEntry } from "@/types/migration";
 
 /** Base URL read from the Next.js environment variable, defaults to localhost for dev.
  *  Supports both NEXT_PUBLIC_API_URL and NEXT_PUBLIC_BACKEND_URL for compatibility. */
@@ -197,3 +197,16 @@ export async function runSelfTest(): Promise<SelfTestReport> {
 
   return response.json();
 }
+
+export async function getMigrationHistory(limit = 20): Promise<MigrationHistoryEntry[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/migrations/history?limit=${limit}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`History fetch failed (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+

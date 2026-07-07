@@ -110,3 +110,18 @@ export interface SelfTestReport {
     message: string;
   }>;
 }
+
+export interface MigrationHistoryEntry {
+  job_id: string;
+  finished_at: string;
+  input_name: string;
+  target_architecture: string;
+  final_state: string;
+  compile_status: string;
+  validation_confidence: string;
+  error_category: string;
+  main_error: string;
+  report_missing: boolean;
+  artifact_missing: boolean;
+}
+
