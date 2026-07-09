@@ -400,13 +400,9 @@ def download_and_extract(host_url: str, migration_id: str, output_path: Path):
     print_step(f"Extracting package to subdirectory: {extract_dir}...")
     extract_dir.mkdir(parents=True, exist_ok=True)
     
-    temp_zip = Path(tempfile.mktemp(suffix="_result.zip"))
-    temp_zip.write_bytes(response.content)
-    with zipfile.ZipFile(temp_zip, 'r') as zipf:
+    import io
+    with zipfile.ZipFile(io.BytesIO(response.content), 'r') as zipf:
         zipf.extractall(extract_dir)
-        
-    if temp_zip.exists():
-        os.remove(temp_zip)
         
     print_success(f"Successfully extracted project to: {extract_dir.resolve()}")
     return True
@@ -881,7 +877,8 @@ def run_interactive_cli():
             # Non-interactive command parsed from args
             mig_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
             mig_parser.add_argument("path", type=str)
-            mig_parser.add_argument("output", type=str)
+            mig_parser.add_argument("output", type=str, nargs="?", default=None)
+            mig_parser.add_argument("--output", dest="output_opt", type=str, default=None)
             mig_parser.add_argument("--arch", type=str, default=default_arch)
             mig_parser.add_argument("--attempts", type=int, default=default_attempts)
             mig_parser.add_argument("--host", type=str, default=default_host)
@@ -889,7 +886,11 @@ def run_interactive_cli():
             try:
                 mig_args = mig_parser.parse_args(parts)
                 proj_path = Path(mig_args.path)
-                out_path = Path(mig_args.output)
+                out_path_str = mig_args.output or mig_args.output_opt
+                if not out_path_str:
+                    print_fail("Error: Output path is required. Use `/migrate <path> <out_dir>` or `/migrate <path> --output <out_dir>`.")
+                    continue
+                out_path = Path(out_path_str)
                 if not proj_path.exists():
                     print_fail(f"Error: Target path '{proj_path}' does not exist.")
                     continue
