@@ -571,9 +571,10 @@ async def handle_hipify(context: WorkflowContext) -> str:
     from app.workflow_engine.state_machine import publish_log
     context.file_lifecycle = {}
 
-    # Process all discovered source files recursively
     primary_output_path = None
-    for src in source_files:
+
+    async def process_file(src):
+        nonlocal hipify_source_count, copied_hip_count, primary_output_path
         rel_path = src.relative_to(input_dir)
         dest = generated_dir / rel_path
         
@@ -661,12 +662,13 @@ async def handle_hipify(context: WorkflowContext) -> str:
                 f"HIP file written (preserved): {rel_dest_str}",
                 file_path=rel_dest_str
             )
-            continue
+            return
             
         dest.parent.mkdir(parents=True, exist_ok=True)
         
         logger.info("[HIPIFY] Translating %s -> %s", src, dest)
-        result = run_hipify(str(src), str(dest))
+        import asyncio
+        result = await asyncio.to_thread(run_hipify, str(src), str(dest))
         
         if not result["success"]:
             error_detail = result.get("stderr") or "hipify-clang returned failure"
@@ -738,6 +740,11 @@ async def handle_hipify(context: WorkflowContext) -> str:
             f"HIP file written: {rel_dest_str}",
             file_path=rel_dest_str
         )
+
+    # Process all files concurrently
+    import asyncio
+    tasks = [process_file(src) for src in source_files]
+    await asyncio.gather(*tasks)
 
     context.hipify_output_path = primary_output_path
     
@@ -1868,7 +1875,7 @@ async def handle_generating_report(context: WorkflowContext) -> str:
     try:
         # Publish AI repair failed if compilation failed and budget was exhausted
         if not getattr(context, "compilation_success", False):
-            from app.compiler.diagnostics_rules import get_skipped_ai_repair_reason
+            from app.services.report_service import get_skipped_ai_repair_reason
             skipped_reason = get_skipped_ai_repair_reason(context)
             if not skipped_reason and getattr(context, "current_attempt", 0) >= getattr(context, "retry_budget", 5):
                 await publish_event(

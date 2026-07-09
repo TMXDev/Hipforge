@@ -121,6 +121,7 @@ async def _recalculate_validation_confidence(context: Any) -> None:
     # Save fields to Redis metadata
     try:
         from app.redis.keys import metadata_key
+        from app.redis.client import redis_client
         m_key = metadata_key(context.migration_id)
         await redis_client.hset(
             m_key,

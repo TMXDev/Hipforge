@@ -78,6 +78,87 @@ def post_process_and_fallback_translate(content: str) -> str:
         r"<cuda_runtime\.h>": "<hip/hip_runtime.h>",
         r"<cuda_runtime_api\.h>": "<hip/hip_runtime_api.h>",
         r"<cuda\.h>": "<hip/hip_runtime.h>",
+        r"\bcudaMallocAsync\b": "hipMallocAsync",
+        r"\bcudaFreeAsync\b": "hipFreeAsync",
+        r"\bcudaMemcpyAsync\b": "hipMemcpyAsync",
+        r"\bcudaMemset\b": "hipMemset",
+        r"\bcudaMemsetAsync\b": "hipMemsetAsync",
+        r"\bcudaMemset2D\b": "hipMemset2D",
+        r"\bcudaMemset2DAsync\b": "hipMemset2DAsync",
+        r"\bcudaMemset3D\b": "hipMemset3D",
+        r"\bcudaMemset3DAsync\b": "hipMemset3DAsync",
+        r"\bcudaStreamQuery\b": "hipStreamQuery",
+        r"\bcudaStreamWaitEvent\b": "hipStreamWaitEvent",
+        r"\bcudaDeviceCanAccessPeer\b": "hipDeviceCanAccessPeer",
+        r"\bcudaDeviceEnablePeerAccess\b": "hipDeviceEnablePeerAccess",
+        r"\bcudaDeviceDisablePeerAccess\b": "hipDeviceDisablePeerAccess",
+        r"\bcudaHostRegister\b": "hipHostRegister",
+        r"\bcudaHostUnregister\b": "hipHostUnregister",
+        r"\bcudaHostGetDevicePointer\b": "hipHostGetDevicePointer",
+        r"\bcudaMallocManaged\b": "hipMallocManaged",
+        r"\bcudaPointerGetAttributes\b": "hipPointerGetAttributes",
+        r"\bcudaFuncGetAttributes\b": "hipFuncGetAttributes",
+        r"\bcudaFuncSetCacheConfig\b": "hipFuncSetCacheConfig",
+        r"\bcudaDeviceSetCacheConfig\b": "hipFuncSetCacheConfig",
+        r"\bcudaDeviceGetCacheConfig\b": "hipDeviceGetCacheConfig",
+        r"\bcudaDeviceGetLimit\b": "hipDeviceGetLimit",
+        r"\bcudaDeviceSetLimit\b": "hipDeviceSetLimit",
+        r"\bcudaGetErrorName\b": "hipGetErrorName",
+        r"\bcudaArray_const\b": "hipArray_const",
+        r"\bcudaMipmappedArray\b": "hipMipmappedArray",
+        r"\bcudaMipmappedArray_t\b": "hipMipmappedArray_t",
+        r"\bcudaMalloc3D\b": "hipMalloc3D",
+        r"\bcudaMalloc3DArray\b": "hipMalloc3DArray",
+        r"\bcudaMallocMipmappedArray\b": "hipMallocMipmappedArray",
+        r"\bcudaFreeMipmappedArray\b": "hipFreeMipmappedArray",
+        r"\bcudaMemcpy3D\b": "hipMemcpy3D",
+        r"\bcudaMemcpy3DPeer\b": "hipMemcpy3DPeer",
+        r"\bcudaMemcpy3DAsync\b": "hipMemcpy3DAsync",
+        r"\bcudaMemcpy3DPeerAsync\b": "hipMemcpy3DPeerAsync",
+        r"\bcudaMemcpyPeer\b": "hipMemcpyPeer",
+        r"\bcudaMemcpyPeerAsync\b": "hipMemcpyPeerAsync",
+        r"\bCUdevice\b": "hipDevice_t",
+        r"\bCUcontext\b": "hipCtx_t",
+        r"\bCUmodule\b": "hipModule_t",
+        r"\bCUfunction\b": "hipFunction_t",
+        r"\bCUstream\b": "hipStream_t",
+        r"\bCUevent\b": "hipEvent_t",
+        r"\bCUdeviceptr\b": "hipDeviceptr_t",
+        r"\bCUresult\b": "hipError_t",
+        r"\bcuInit\b": "hipInit",
+        r"\bcuDeviceGet\b": "hipDeviceGet",
+        r"\bcuDeviceGetCount\b": "hipDeviceGetCount",
+        r"\bcuDeviceGetName\b": "hipDeviceGetName",
+        r"\bcuDeviceTotalMem\b": "hipDeviceTotalMem",
+        r"\bcuCtxCreate\b": "hipCtxCreate",
+        r"\bcuCtxDestroy\b": "hipCtxDestroy",
+        r"\bcuCtxPushCurrent\b": "hipCtxPushCurrent",
+        r"\bcuCtxPopCurrent\b": "hipCtxPopCurrent",
+        r"\bcuCtxSetCurrent\b": "hipCtxSetCurrent",
+        r"\bcuCtxGetCurrent\b": "hipCtxGetCurrent",
+        r"\bcuCtxSynchronize\b": "hipCtxSynchronize",
+        r"\bcuModuleLoad\b": "hipModuleLoad",
+        r"\bcuModuleLoadData\b": "hipModuleLoadData",
+        r"\bcuModuleUnload\b": "hipModuleUnload",
+        r"\bcuModuleGetFunction\b": "hipModuleGetFunction",
+        r"\bcuModuleGetGlobal\b": "hipModuleGetGlobal",
+        r"\bcuMemAlloc\b": "hipMalloc",
+        r"\bcuMemFree\b": "hipFree",
+        r"\bcuMemcpyHtoD\b": "hipMemcpyHtoD",
+        r"\bcuMemcpyDtoH\b": "hipMemcpyDtoH",
+        r"\bcuMemcpyDtoD\b": "hipMemcpyDtoD",
+        r"\bcuMemcpyHtoDAsync\b": "hipMemcpyHtoDAsync",
+        r"\bcuMemcpyDtoHAsync\b": "hipMemcpyDtoHAsync",
+        r"\bcuLaunchKernel\b": "hipModuleLaunchKernel",
+        r"\bcuStreamCreate\b": "hipStreamCreate",
+        r"\bcuStreamDestroy\b": "hipStreamDestroy",
+        r"\bcuStreamSynchronize\b": "hipStreamSynchronize",
+        r"\bcuEventCreate\b": "hipEventCreate",
+        r"\bcuEventDestroy\b": "hipEventDestroy",
+        r"\bcuEventRecord\b": "hipEventRecord",
+        r"\bcuEventSynchronize\b": "hipEventSynchronize",
+        r"\bcuEventElapsedTime\b": "hipEventElapsedTime",
+        r"<device_launch_parameters\.h>": "<hip/hip_runtime.h>",
     }
     
     processed = content
@@ -99,6 +180,18 @@ def post_process_and_fallback_translate(content: str) -> str:
     )
     
     return processed
+
+def needs_hipify(content: str) -> bool:
+    """
+    Check if the file content actually contains CUDA APIs, headers, or syntax
+    that requires hipify-clang translation.
+    """
+    cuda_keywords = [
+        "cuda", "cu", "__global__", "__device__", "__shared__", "<<<", ">>>",
+        "blockidx", "threadidx", "blockdim", "griddim", "warpsize"
+    ]
+    content_lower = content.lower()
+    return any(kw in content_lower for kw in cuda_keywords)
 
 class HipifyRunner:
     """Real runner that executes the actual hipify-clang command line tool with regex post-processing and heuristic fallback."""
@@ -165,6 +258,17 @@ class HipifyRunner:
             "stderr": sandbox_result.get("stderr", ""),
         }
     
+    def _get_cache_path(self, source_path: str, content: str) -> tuple[Path, str]:
+        """Compute the cache file path based on content hash."""
+        import hashlib
+        h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        workspace_path = self._infer_workspace_path(source_path)
+        if workspace_path:
+            cache_dir = Path(workspace_path) / ".cache" / "hipify"
+        else:
+            cache_dir = Path(os.path.dirname(os.path.abspath(source_path))) / ".cache" / "hipify"
+        return cache_dir / f"{h}.hip", h
+
     def run_hipify(self, source_path: str, output_path: str) -> Dict[str, Any]:
         """
         Runs the real hipify-clang tool as a subprocess on the given source file.
@@ -189,6 +293,57 @@ class HipifyRunner:
                 "stdout": "",
                 "stderr": err_msg
             }
+
+        # Check cache first (ponytail: caching to avoid redundant 30s Docker spawns)
+        try:
+            cache_file, content_hash = self._get_cache_path(source_path, source_content)
+            if cache_file.exists():
+                logger.info(f"[HIPIFY Cache Hit] Reusing cached translation for {source_path}")
+                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                with open(cache_file, "r", encoding="utf-8") as cf:
+                    cached_translated = cf.read()
+                with open(output_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(cached_translated)
+                return {
+                    "success": True,
+                    "output_path": output_path,
+                    "stdout": f"[Cache Hit] Successfully loaded from cache ({content_hash}).",
+                    "stderr": ""
+                }
+        except Exception as e:
+            logger.warning(f"Failed to read from hipify cache: {e}")
+
+        # Check if the file actually needs hipify-clang (ponytail: bypass if no CUDA keywords)
+        if not needs_hipify(source_content):
+            logger.info(f"[HIPIFY Skip] {source_path} does not contain CUDA keywords. Translating via fallback (fast path).")
+            translated = post_process_and_fallback_translate(source_content)
+            try:
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(translated)
+                # Write to cache
+                try:
+                    cache_file, content_hash = self._get_cache_path(source_path, source_content)
+                    os.makedirs(cache_file.parent, exist_ok=True)
+                    with open(cache_file, "w", encoding="utf-8") as cf:
+                        cf.write(translated)
+                except Exception as ce:
+                    logger.warning(f"Failed to write to cache: {ce}")
+                
+                return {
+                    "success": True,
+                    "output_path": output_path,
+                    "stdout": "Translated successfully via fallback (no CUDA keywords)",
+                    "stderr": "",
+                }
+            except Exception as e:
+                err_msg = f"Failed to write output: {str(e)}"
+                logger.error(err_msg)
+                return {
+                    "success": False,
+                    "output_path": output_path,
+                    "stdout": "",
+                    "stderr": err_msg,
+                }
 
         use_mock_compiler = os.getenv("USE_MOCK_COMPILER", "false").lower() == "true"
         if use_mock_compiler:
@@ -243,6 +398,18 @@ class HipifyRunner:
                 # Success path with post-processing
                 try:
                     self._post_process_output(output_path)
+                    
+                    # Write to cache
+                    try:
+                        with open(output_path, "r", encoding="utf-8") as f:
+                            final_translated = f.read()
+                        cache_file, content_hash = self._get_cache_path(source_path, source_content)
+                        os.makedirs(cache_file.parent, exist_ok=True)
+                        with open(cache_file, "w", encoding="utf-8") as cf:
+                            cf.write(final_translated)
+                    except Exception as ce:
+                        logger.warning(f"Failed to write to cache: {ce}")
+                    
                     return {
                         "success": True,
                         "output_path": output_path,
@@ -260,6 +427,17 @@ class HipifyRunner:
             else:
                 sandboxed = self._run_sandboxed_hipify(source_path, output_path)
                 if sandboxed is not None:
+                    if sandboxed.get("success"):
+                        # Cache sandboxed success
+                        try:
+                            with open(output_path, "r", encoding="utf-8") as f:
+                                final_translated = f.read()
+                            cache_file, content_hash = self._get_cache_path(source_path, source_content)
+                            os.makedirs(cache_file.parent, exist_ok=True)
+                            with open(cache_file, "w", encoding="utf-8") as cf:
+                                cf.write(final_translated)
+                        except Exception as ce:
+                            logger.warning(f"Failed to write to cache: {ce}")
                     return sandboxed
                 return {
                     "success": False,
@@ -280,6 +458,17 @@ class HipifyRunner:
         except (FileNotFoundError, subprocess.SubprocessError):
             sandboxed = self._run_sandboxed_hipify(source_path, output_path)
             if sandboxed is not None:
+                if sandboxed.get("success"):
+                    # Cache sandboxed success
+                    try:
+                        with open(output_path, "r", encoding="utf-8") as f:
+                            final_translated = f.read()
+                        cache_file, content_hash = self._get_cache_path(source_path, source_content)
+                        os.makedirs(cache_file.parent, exist_ok=True)
+                        with open(cache_file, "w", encoding="utf-8") as cf:
+                            cf.write(final_translated)
+                    except Exception as ce:
+                        logger.warning(f"Failed to write to cache: {ce}")
                 return sandboxed
             return {
                 "success": False,

@@ -300,7 +300,6 @@ class HipccRunner:
             errors = []
             if timed_out:
                 msg = f"Compilation timed out after {timeout_sec} seconds."
-                from app.models.compiler_error import CompilerError
                 errors.append(CompilerError(
                     file=source_path,
                     line=1,

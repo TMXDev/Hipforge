@@ -214,13 +214,17 @@ def test_cli_path_smoke(valid_cuda_project, tmp_path):
     assert result.returncode == 0, f"CLI exited with code {result.returncode}. Stderr: {result.stderr}"
 
     # Verify extracted package structure
-    report_md = output_dir / "reports" / "migration_report.md"
-    report_json = output_dir / "reports" / "migration_report.json"
-    compile_log = output_dir / "logs" / "compile_attempt_001.log"
+    # ponytail: look inside the migration_id subdirectory created by the CLI
+    migration_folders = list(output_dir.glob("migration_*"))
+    target_root = migration_folders[0] if migration_folders else output_dir
 
-    assert report_md.exists(), "CLI output missing migration_report.md"
-    assert report_json.exists(), "CLI output missing migration_report.json"
-    assert compile_log.exists(), "CLI output missing compile_attempt_001.log"
+    report_md = target_root / "reports" / "migration_report.md"
+    report_json = target_root / "reports" / "migration_report.json"
+    compile_log = target_root / "logs" / "compile_attempt_001.log"
+
+    assert report_md.exists(), f"CLI output missing migration_report.md in {target_root}"
+    assert report_json.exists(), f"CLI output missing migration_report.json in {target_root}"
+    assert compile_log.exists(), f"CLI output missing compile_attempt_001.log in {target_root}"
 
     # Verify compiler log output contains compile command with offload architecture
     log_content = compile_log.read_text(encoding="utf-8")

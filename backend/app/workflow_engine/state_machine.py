@@ -259,7 +259,15 @@ class WorkflowEngine:
                     "error_category": getattr(self.context, "error_category", "NONE") or "NONE",
                     "recommended_next_action": getattr(self.context, "recommended_next_action", "") or "",
                     "failure_reason": getattr(self.context, "failure_reason", "") or "",
-                    "stage_timings": json.dumps(self.context.stage_timings)
+                    "stage_timings": json.dumps(self.context.stage_timings),
+                    "compile_status": getattr(self.context, "compile_status", "NOT_RUN") or "NOT_RUN",
+                    "last_compile_command": getattr(self.context, "last_compile_command", "") or "",
+                    "main_error": getattr(self.context, "main_error", "") or "",
+                    "last_compile_stderr": getattr(self.context, "last_compile_stderr", "") or "",
+                    "validation_confidence": getattr(self.context, "validation_confidence", "LOW") or "LOW",
+                    "validation_confidence_reason": getattr(self.context, "validation_confidence_reason", "") or "",
+                    "runtime_validation_status": getattr(self.context, "runtime_validation_status", "NOT_RUN") or "NOT_RUN",
+                    "compiler_mode": getattr(self.context, "compiler_mode", "real") or "real",
                 }
                 if getattr(self.context, "project_scan", None):
                     metadata_updates["project_scan"] = json.dumps(self.context.project_scan)

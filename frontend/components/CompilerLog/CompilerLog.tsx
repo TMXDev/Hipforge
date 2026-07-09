@@ -46,7 +46,7 @@ export default function CompilerLog({ events }: CompilerLogProps) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const prevEventLenRef = useRef(0);
 
   // Convert new incoming events to log lines
@@ -74,10 +74,10 @@ export default function CompilerLog({ events }: CompilerLogProps) {
     }
   }, [events]);
 
-  // Auto-scroll to bottom when new lines arrive
+  // Auto-scroll to bottom when new lines arrive (ponytail: direct scrollTop to avoid viewport/camera scroll thrashing)
   useEffect(() => {
-    if (autoScroll) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [lines, autoScroll]);
 
@@ -163,6 +163,7 @@ export default function CompilerLog({ events }: CompilerLogProps) {
 
       {/* Log body — dark terminal area preserves code readability */}
       <div
+        ref={containerRef}
         role="log"
         aria-live="polite"
         aria-label="Compiler log output"
@@ -190,7 +191,6 @@ export default function CompilerLog({ events }: CompilerLogProps) {
             </div>
           ))
         )}
-        <div ref={bottomRef} aria-hidden="true" />
       </div>
     </div>
   );

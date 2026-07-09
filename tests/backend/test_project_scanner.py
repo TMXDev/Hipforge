@@ -332,6 +332,7 @@ class TestPreflightProjectScan:
         """Single .cu passes project scan but fails at env diagnostics."""
         from app.workflow_engine.context import WorkflowContext
         from app.workflow_engine.states import handle_preflight
+        from unittest.mock import patch
 
         ws = tmp_path / "workspace"
         for d in ("input", "generated", "logs", "artifacts", "reports", "exports"):
@@ -339,8 +340,15 @@ class TestPreflightProjectScan:
         (ws / "input" / "kernel.cu").write_text(SAMPLE_CUDA, encoding="utf-8")
 
         ctx = WorkflowContext(migration_id="test-preflight-ok", workspace_path=str(ws))
-        with pytest.raises(RuntimeError):
-            await handle_preflight(ctx)
+        
+        mock_report = {
+            "critical_failures": [{"id": "docker_daemon", "category": "ENVIRONMENT_ERROR", "message": "Docker not running"}],
+            "warnings": [],
+            "system_info": {}
+        }
+        with patch("app.diagnostics.run_preflight", return_value=mock_report):
+            with pytest.raises(RuntimeError):
+                await handle_preflight(ctx)
         assert ctx.error_category not in (NO_PROJECT_FILES, NON_CUDA_CPP_PROJECT, HEADER_ONLY_INPUT)
         assert ctx.project_scan is not None
         assert ctx.project_scan["compile_strategy"] == "generated_single_file_makefile"
@@ -350,6 +358,7 @@ class TestPreflightProjectScan:
         """Existing HIP project passes project scan, fails at env diagnostics."""
         from app.workflow_engine.context import WorkflowContext
         from app.workflow_engine.states import handle_preflight
+        from unittest.mock import patch
 
         ws = tmp_path / "workspace"
         for d in ("input", "generated", "logs", "artifacts", "reports", "exports"):
@@ -357,8 +366,15 @@ class TestPreflightProjectScan:
         (ws / "input" / "kernel.hip").write_text(SAMPLE_HIP, encoding="utf-8")
 
         ctx = WorkflowContext(migration_id="test-preflight-hip", workspace_path=str(ws))
-        with pytest.raises(RuntimeError):
-            await handle_preflight(ctx)
+        
+        mock_report = {
+            "critical_failures": [{"id": "docker_daemon", "category": "ENVIRONMENT_ERROR", "message": "Docker not running"}],
+            "warnings": [],
+            "system_info": {}
+        }
+        with patch("app.diagnostics.run_preflight", return_value=mock_report):
+            with pytest.raises(RuntimeError):
+                await handle_preflight(ctx)
         assert ctx.error_category != EXISTING_HIP_PROJECT
         assert ctx.project_scan is not None
         assert ctx.project_scan["category"] == EXISTING_HIP_PROJECT
