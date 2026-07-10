@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Github, Sun, Moon } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
+import { useState, useEffect } from "react";
 
 /**
  * HIPForge luxury editorial navigation bar.
@@ -11,6 +12,30 @@ import { useTheme } from "@/components/ThemeProvider";
  */
 export default function Navbar() {
   const { theme, toggleTheme } = useTheme();
+  const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking");
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const url = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+        const resp = await fetch(`${url}/api/v1/health/check`, { signal: AbortSignal.timeout(4000) });
+        setApiStatus(resp.ok ? "online" : "offline");
+      } catch {
+        setApiStatus("offline");
+      }
+    };
+    checkHealth();
+    // ponytail: re-check every 30s; upgrade path: SSE/WS health stream
+    const interval = setInterval(checkHealth, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const statusDot = apiStatus === "online"
+    ? "bg-emerald-500 animate-pulse-slow"
+    : apiStatus === "offline"
+      ? "bg-red-500"
+      : "bg-amber-400 animate-pulse";
+  const statusLabel = apiStatus === "online" ? "API Online" : apiStatus === "offline" ? "API Offline" : "Checking…";
 
   return (
     <nav
@@ -82,20 +107,20 @@ export default function Navbar() {
             </a>
           </nav>
 
-          {/* API Status badge */}
+          {/* API Status badge — live health check */}
           <div
             className="flex items-center gap-2 px-3 py-1.5"
             style={{ border: "1px solid var(--border-primary)" }}
           >
             <span
-              className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse-slow"
+              className={`h-1.5 w-1.5 rounded-full ${statusDot}`}
               aria-hidden="true"
             />
             <span
               className="text-[10px] font-medium tracking-[0.2em] uppercase"
               style={{ color: "var(--text-muted)" }}
             >
-              API Online
+              {statusLabel}
             </span>
           </div>
 

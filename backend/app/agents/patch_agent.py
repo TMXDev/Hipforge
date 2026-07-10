@@ -75,8 +75,18 @@ Rules you must follow:
 - Do NOT add unsolicited optimizations, comments, or features.
 - Do NOT remove functionality that compiles correctly.
 - Do NOT repeat a fix that is already recorded in the Migration Journal as failed.
+- When patching #include directives, also update any related #ifdef guards (e.g. #ifdef CUDA_VERSION → #ifdef HIP_VERSION, #ifdef __CUDA_ARCH__ → #ifdef __HIP_DEVICE_COMPILE__).
 - Respond with ONLY the complete corrected source file — no explanation, \
-no markdown fences, no commentary. Just the raw source code.\
+no markdown fences, no commentary. Just the raw source code.
+
+CUDA Library → ROCm Type/API Quick Reference:
+- cuBLAS: cublasHandle_t → rocblas_handle, cublasCreate → rocblas_create_handle, cublasDestroy → rocblas_destroy_handle, cublasSgemm → rocblas_sgemm, CUBLAS_OP_N → rocblas_operation_none, CUBLAS_OP_T → rocblas_operation_transpose. CRITICAL: rocBLAS passes alpha/beta scalars by POINTER, not by value.
+- cuFFT: cufftHandle → rocfft_plan, plan creation uses rocfft_plan_create() (not cufftPlan1d), execution uses rocfft_execute().
+- cuRAND: curandGenerator_t → rocrand_generator, curandCreateGenerator → rocrand_create_generator, CURAND_RNG_PSEUDO_DEFAULT → ROCRAND_RNG_PSEUDO_DEFAULT.
+- cuSPARSE: cusparseHandle_t → rocsparse_handle, cusparseCreate → rocsparse_create_handle.
+- cuDNN → MIOpen: cudnnHandle_t → miopenHandle_t, cudnnCreate → miopenCreate, CUDNN_STATUS_SUCCESS → miopenStatusSuccess. API differs significantly — descriptors and algorithm selection work differently.
+- cuSOLVER → rocSOLVER: cusolverDnHandle_t → rocblas_handle (shared with rocBLAS).
+- Linker flags: -lcublas → -lrocblas, -lcufft → -lrocfft, -lcurand → -lrocrand, -lcusparse → -lrocsparse, -lcudnn → -lMIOpen, -lcusolver → -lrocsolver, -lnccl → -lrccl.\
 """
 
 

@@ -358,8 +358,11 @@ def run_preflight(
     output_path = Path(output_dir) if output_dir else workspace_root / "exports"
     project_requirements = detect_project_requirements(workspace_path)
     compiler_is_mocked = settings.USE_MOCK_COMPILER
+    host_hipify = _check_host_binary("hipify-clang")
+    host_hipcc = _check_host_binary("hipcc")
+    host_toolchain = bool(host_hipify and host_hipcc)
     ai_is_mocked = settings.USE_MOCK_AI or not require_ai
-    needs_sandbox_toolchain = not compiler_is_mocked
+    needs_sandbox_toolchain = not compiler_is_mocked and not host_toolchain
 
     docker_state: Dict[str, Any] = {
         "client": None,
@@ -383,14 +386,10 @@ def run_preflight(
         docker_state["client"] = client
         return PASS, "Docker SDK client initialized.", "", {}
 
-    _timed_check(
-        checks,
-        "docker_sdk",
-        "Docker SDK Connectivity",
-        needs_sandbox_toolchain,
-        ERROR_DEPENDENCY,
-        docker_sdk_check,
-    )
+    if needs_sandbox_toolchain:
+        _timed_check(checks, "docker_sdk", "Docker SDK Connectivity", True, ERROR_DEPENDENCY, docker_sdk_check)
+    else:
+        _add_check(checks, "docker_sdk", "Docker SDK Connectivity", SKIP, False, ERROR_DEPENDENCY, "Docker SDK check skipped because host ROCm tools are available.")
 
     def docker_daemon_check():
         client = docker_state["client"]
@@ -400,14 +399,10 @@ def run_preflight(
         docker_state["info"] = client.info()
         return PASS, "Docker daemon is running.", "", {"server_version": docker_state["info"].get("ServerVersion")}
 
-    _timed_check(
-        checks,
-        "docker_daemon",
-        "Docker Daemon",
-        needs_sandbox_toolchain,
-        ERROR_ENVIRONMENT,
-        docker_daemon_check,
-    )
+    if needs_sandbox_toolchain:
+        _timed_check(checks, "docker_daemon", "Docker Daemon", True, ERROR_ENVIRONMENT, docker_daemon_check)
+    else:
+        _add_check(checks, "docker_daemon", "Docker Daemon", SKIP, False, ERROR_ENVIRONMENT, "Docker daemon check skipped because host ROCm tools are available.")
 
     image_name = settings.SANDBOX_IMAGE
 
@@ -434,17 +429,19 @@ def run_preflight(
             checks,
             "docker_image",
             "Docker Image",
-            FAIL if needs_sandbox_toolchain else WARN,
+            FAIL if needs_sandbox_toolchain else SKIP,
             needs_sandbox_toolchain,
             ERROR_DEPENDENCY,
-            f"Docker image {image_name} cannot be verified because Docker is unavailable.",
-            f"Start Docker and pull the sandbox image with: docker pull {image_name}",
+            f"Docker image {image_name} cannot be verified because Docker is unavailable." if needs_sandbox_toolchain else "Docker image check skipped because host ROCm tools are available.",
+            f"Start Docker and pull the sandbox image with: docker pull {image_name}" if needs_sandbox_toolchain else "",
         )
 
     runtime, runsc_available = _container_runtime(docker_state["info"])
     docker_state["runtime"] = runtime
     docker_state["runsc_available"] = runsc_available
-    if runsc_available:
+    if not needs_sandbox_toolchain:
+        _add_check(checks, "runsc", "gVisor runsc", SKIP, False, ERROR_ENVIRONMENT, "gVisor check skipped because host ROCm tools are available.")
+    elif runsc_available:
         _add_check(
             checks,
             "runsc",
@@ -506,14 +503,13 @@ def run_preflight(
             checks,
             "docker_container_start",
             "Docker Container Startup",
-            SKIP if compiler_is_mocked else FAIL,
+            SKIP if not needs_sandbox_toolchain else FAIL,
             needs_sandbox_toolchain,
             ERROR_ENVIRONMENT,
-            "Sandbox container startup was skipped because Docker image or daemon is unavailable.",
-            "Fix Docker daemon and image availability first.",
+            "Sandbox container startup was skipped because Docker image or daemon is unavailable." if needs_sandbox_toolchain else "Sandbox container startup skipped because host ROCm tools are available.",
+            "Fix Docker daemon and image availability first." if needs_sandbox_toolchain else "",
         )
 
-    host_hipify = _check_host_binary("hipify-clang")
     host_hipify_required = settings.REQUIRE_HOST_HIPIFY
     _add_check(
         checks,
@@ -525,6 +521,13 @@ def run_preflight(
         f"Host hipify-clang found at {host_hipify}." if host_hipify else "Host hipify-clang is not on PATH.",
         "Install ROCm HIPIFY tools or rely on the sandboxed hipify-clang path." if not host_hipify else "",
         {"path": host_hipify, "required": host_hipify_required},
+    )
+    _add_check(
+        checks, "host_hipcc", "Host hipcc", PASS if host_hipcc else WARN, False,
+        ERROR_TOOLCHAIN,
+        f"Host hipcc found at {host_hipcc}." if host_hipcc else "Host hipcc is not on PATH.",
+        "Install ROCm HIP SDK or rely on the sandboxed hipcc path." if not host_hipcc else "",
+        {"path": host_hipcc, "native_toolchain": host_toolchain},
     )
 
     sandbox_probe: Dict[str, str] = {}
@@ -567,9 +570,9 @@ def run_preflight(
     for check_id, name, key, category, recommendation in sandbox_checks:
         value = sandbox_value(key)
         details = {"value": value}
-        if compiler_is_mocked:
+        if compiler_is_mocked or host_toolchain:
             status = SKIP
-            message = f"{name} check skipped because USE_MOCK_COMPILER=true."
+            message = f"{name} check skipped because {'USE_MOCK_COMPILER=true' if compiler_is_mocked else 'host ROCm tools are available'}."
             critical = False
         else:
             status = PASS if value else FAIL

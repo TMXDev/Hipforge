@@ -19,6 +19,17 @@ def determine_next_state(current_state: str, success: bool, context: WorkflowCon
             return "ANALYZING"
 
         return "GENERATING_REPORT"
+
+    # ponytail: confidence-based research trigger — if the analysis agent
+    # is unsure and we've burned 2+ attempts, consult research before
+    # wasting another patch. upgrade path: make threshold configurable
+    if current_state == "ANALYZING" and success:
+        analysis = getattr(context, "analysis_result", None) or {}
+        confidence = analysis.get("confidence", 1.0)
+        attempt = max(getattr(context, "current_attempt", 0), 0)
+        already_researched = getattr(context, "researched", False)
+        if confidence < 0.5 and attempt >= 2 and not already_researched:
+            return "RESEARCHING"
             
     if current_state == "RESEARCHING":
         context.researched = True

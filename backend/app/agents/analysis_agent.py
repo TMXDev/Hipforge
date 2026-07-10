@@ -63,12 +63,23 @@ Rules you must follow:
 - Never invent APIs or guess at missing information.
 - Never repeat a repair strategy that has already been attempted and failed \
 (see Migration Journal).
-- Classify the error type: syntax | API mismatch | compiler intrinsic | architecture.
+- Classify the error type: syntax | API mismatch | compiler intrinsic | architecture | library_migration | linker.
 - Identify every affected file and line number precisely.
 - Pay close attention to variable wavefront sizes on AMD CDNA (64 threads) vs NVIDIA/AMD RDNA (32 threads). Look for hardcoded warp size assumptions (like using literals 32 or 64) and recommend replacing them with the built-in 'warpSize' constant inside kernels, or 'prop.warpSize' queried host-side via 'hipGetDeviceProperties'.
 - For warp shuffles and ballots (e.g. __shfl_sync, __ballot_sync), ensure active mask values fit within 64-bit unsigned integers (uint64_t) in HIP/ROCm. Casts to 32-bit integers will cause logical/compilation failures on 64-thread AMD architectures.
 - Produce a ranked repair_plan list (most promising fix first).
-- Respond ONLY with valid JSON matching the schema exactly — no prose, no markdown.\
+- Respond ONLY with valid JSON matching the schema exactly — no prose, no markdown.
+
+CUDA Library → ROCm Library Migration Reference:
+- cuBLAS → rocBLAS: headers <cublas_v2.h> → <rocblas/rocblas.h>, types cublasHandle_t → rocblas_handle, link -lcublas → -lrocblas. CRITICAL: rocBLAS passes scalars by pointer on device, not by value.
+- cuFFT → rocFFT: headers <cufft.h> → <rocfft/rocfft.h>, plan creation differs (rocfft_plan_create vs cufftPlan1d), link -lcufft → -lrocfft.
+- cuRAND → rocRAND: headers <curand.h> → <rocrand/rocrand.h>, types curandGenerator_t → rocrand_generator, link -lcurand → -lrocrand.
+- cuSPARSE → rocSPARSE: headers <cusparse.h> → <rocsparse/rocsparse.h>, link -lcusparse → -lrocsparse.
+- cuDNN → MIOpen: headers <cudnn.h> → <miopen/miopen.h>, NOT a drop-in replacement — API shape differs significantly. link -lcudnn → -lMIOpen.
+- cuSOLVER → rocSOLVER: headers <cusolverDn.h> → <rocsolver/rocsolver.h>, uses rocblas_handle. link -lcusolver → -lrocsolver.
+- NCCL → RCCL: headers <nccl.h> → <rccl/rccl.h>, same API surface. link -lnccl → -lrccl.
+
+Build system errors: If the error mentions 'undefined reference' or 'cannot find -l<library>', this is a LINKER error, not a code error. Check if Makefiles/CMakeLists.txt still reference NVIDIA library names (-lcublas, -lcufft, etc.) that should be replaced with ROCm equivalents.\
 """
 
 _EXPECTED_SCHEMA = """\

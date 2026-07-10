@@ -5,9 +5,10 @@ import {
   useRef,
   useState,
   useCallback,
+  useMemo,
   type KeyboardEvent,
 } from "react";
-import { Terminal, Pause, Play, Copy, Check } from "lucide-react";
+import { Terminal, Pause, Play, Copy, Check, Search } from "lucide-react";
 import type { StreamEvent } from "@/hooks/useWebSocket";
 
 export interface LogLine {
@@ -40,12 +41,14 @@ function levelClass(level: string): string {
  *
  * Receives WebSocket compiler_log events from the parent, displays them in
  * a scrollable monospaced terminal window. Supports auto-scroll toggle,
- * copy-all, and level-based colour coding.
+ * copy-all, level-based colour coding, error/warning counts, search filter,
+ * and line numbers.
  */
 export default function CompilerLog({ events }: CompilerLogProps) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const prevEventLenRef = useRef(0);
 
@@ -80,6 +83,25 @@ export default function CompilerLog({ events }: CompilerLogProps) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [lines, autoScroll]);
+
+  // Error/warning counts
+  const { errorCount, warnCount } = useMemo(() => {
+    let errors = 0;
+    let warns = 0;
+    for (const l of lines) {
+      const lev = l.level.toUpperCase();
+      if (lev === "ERROR") errors++;
+      else if (lev === "WARNING") warns++;
+    }
+    return { errorCount: errors, warnCount: warns };
+  }, [lines]);
+
+  // Filtered lines for search
+  const displayLines = useMemo(() => {
+    if (!searchQuery.trim()) return lines;
+    const q = searchQuery.toLowerCase();
+    return lines.filter((l) => l.content.toLowerCase().includes(q) || l.level.toLowerCase().includes(q));
+  }, [lines, searchQuery]);
 
   const handleCopy = useCallback(async () => {
     const text = lines
@@ -122,8 +144,33 @@ export default function CompilerLog({ events }: CompilerLogProps) {
               {lines.length} lines
             </span>
           )}
+          {/* Error/warning count badges */}
+          {errorCount > 0 && (
+            <span className="border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-400">
+              {errorCount} error{errorCount !== 1 ? "s" : ""}
+            </span>
+          )}
+          {warnCount > 0 && (
+            <span className="border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-300">
+              {warnCount} warning{warnCount !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Search filter */}
+          <div className="relative flex items-center">
+            <Search className="absolute left-2 h-3 w-3 text-themeTextMuted/50" strokeWidth={1.5} aria-hidden="true" />
+            <input
+              type="text"
+              id="compiler-log-search"
+              placeholder="Filter…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-7 w-28 border border-themeBorder bg-transparent pl-7 pr-2 text-[10px] text-themeText placeholder:text-themeTextMuted/40 focus:w-40 focus:border-[#D4AF37]/50 focus:outline-none transition-all duration-300"
+              aria-label="Filter compiler log lines"
+            />
+          </div>
+
           {/* Auto-scroll toggle */}
           <button
             type="button"
@@ -170,13 +217,17 @@ export default function CompilerLog({ events }: CompilerLogProps) {
         className="h-64 overflow-y-auto bg-[#1A1A1A] p-4 font-mono text-xs leading-relaxed text-[#EDE8E2]"
         style={{ fontFamily: "'JetBrains Mono', monospace" }}
       >
-        {lines.length === 0 ? (
+        {displayLines.length === 0 ? (
           <p className="italic text-[#6C6863]">
-            Waiting for compiler output…
+            {searchQuery ? "No matching log lines." : "Waiting for compiler output…"}
           </p>
         ) : (
-          lines.map((line) => (
+          displayLines.map((line, idx) => (
             <div key={line.id} className="flex gap-2">
+              {/* Line number */}
+              <span className="shrink-0 w-8 text-right text-[#6C6863]/40 select-none">
+                {idx + 1}
+              </span>
               <span className="shrink-0 text-[#6C6863]/60">
                 {new Date(line.timestamp).toLocaleTimeString([], {
                   hour: "2-digit",

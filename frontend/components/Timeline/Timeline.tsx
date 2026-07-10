@@ -5,7 +5,7 @@ import { Wifi, WifiOff, AlertTriangle } from "lucide-react";
 import TimelineItem from "./TimelineItem";
 import { STAGE_META, type JobState, type StageState } from "./types";
 import { useWebSocket, type StreamEvent } from "@/hooks/useWebSocket";
-import { getJournal } from "@/services/api";
+import { getJournal, getMigrationStatus } from "@/services/api";
 
 interface TimelineProps {
   /** The migration UUID being tracked */
@@ -60,9 +60,7 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
       try {
         const [journalData, statusData] = await Promise.all([
           getJournal(migrationId),
-          fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v1/migrate/${migrationId}/status`)
-            .then(res => res.json())
-            .catch(() => null)
+          getMigrationStatus(migrationId).catch(() => null)
         ]);
 
         if (!active) return;

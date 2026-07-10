@@ -315,6 +315,111 @@ _PATTERNS: List[Dict[str, Any]] = [
             "behaviour, as execution policies and iterator semantics may differ."
         ),
     },
+    # ------------------------------------------------------------------
+    # 11. cuBLAS usage
+    # cuBLAS must be replaced with rocBLAS; API argument order differs.
+    # ------------------------------------------------------------------
+    {
+        "pattern_id": "CUBLAS_USAGE",
+        "category": "cuBLAS",
+        "severity": "medium",
+        "regex": re.compile(
+            r"(?:#\s*include\s*[<\"]cublas|(?:^|\s)cublas[A-Z])",
+            re.MULTILINE,
+        ),
+        "description": (
+            "cuBLAS library usage detected. rocBLAS is the AMD equivalent but "
+            "has different API conventions: rocBLAS functions take the handle "
+            "as the first argument and use rocblas_ prefixed types."
+        ),
+        "recommendation": (
+            "Replace cuBLAS headers with <rocblas/rocblas.h>, types with "
+            "rocblas_ equivalents, and link with -lrocblas instead of -lcublas. "
+            "Note: rocBLAS passes scalars by pointer on device, not by value."
+        ),
+    },
+    # ------------------------------------------------------------------
+    # 12. cuFFT usage
+    # ------------------------------------------------------------------
+    {
+        "pattern_id": "CUFFT_USAGE",
+        "category": "cuFFT",
+        "severity": "medium",
+        "regex": re.compile(
+            r"(?:#\s*include\s*[<\"]cufft|(?:^|\s)cufft[A-Z])",
+            re.MULTILINE,
+        ),
+        "description": (
+            "cuFFT library usage detected. rocFFT has a different plan creation "
+            "API — plans are created with rocfft_plan_create() instead of "
+            "cufftPlan1d/2d/3d, and execution uses rocfft_execute()."
+        ),
+        "recommendation": (
+            "Replace cuFFT with rocFFT. Plan creation requires rocfft_plan_create() "
+            "with explicit transform type and dimensions. Link with -lrocfft."
+        ),
+    },
+    # ------------------------------------------------------------------
+    # 13. cuRAND usage
+    # ------------------------------------------------------------------
+    {
+        "pattern_id": "CURAND_USAGE",
+        "category": "cuRAND",
+        "severity": "low",
+        "regex": re.compile(
+            r"(?:#\s*include\s*[<\"]curand|(?:^|\s)curand[A-Z])",
+            re.MULTILINE,
+        ),
+        "description": (
+            "cuRAND library usage detected. rocRAND provides a compatible API "
+            "but generator type constants use ROCRAND_ prefix."
+        ),
+        "recommendation": (
+            "Replace cuRAND with rocRAND headers and types. "
+            "Link with -lrocrand instead of -lcurand."
+        ),
+    },
+    # ------------------------------------------------------------------
+    # 14. cuDNN usage — requires MIOpen (different API shape)
+    # ------------------------------------------------------------------
+    {
+        "pattern_id": "CUDNN_USAGE",
+        "category": "cuDNN",
+        "severity": "high",
+        "regex": re.compile(
+            r"(?:#\s*include\s*[<\"]cudnn|(?:^|\s)cudnn[A-Z])",
+            re.MULTILINE,
+        ),
+        "description": (
+            "cuDNN library usage detected. MIOpen is the AMD equivalent but "
+            "is NOT a drop-in replacement — convolution descriptors, algorithm "
+            "selection, and tensor format enums all differ significantly."
+        ),
+        "recommendation": (
+            "Replace cuDNN with MIOpen (<miopen/miopen.h>). Major API shape "
+            "changes are required: descriptor creation, find-algorithm workflow, "
+            "and workspace allocation all differ. Link with -lMIOpen."
+        ),
+    },
+    # ------------------------------------------------------------------
+    # 15. __launch_bounds__ tuning
+    # NVIDIA and AMD have different optimal launch bounds.
+    # ------------------------------------------------------------------
+    {
+        "pattern_id": "LAUNCH_BOUNDS_TUNING",
+        "category": "Launch Bounds",
+        "severity": "low",
+        "regex": re.compile(r"__launch_bounds__\s*\("),
+        "description": (
+            "__launch_bounds__ detected. The optimal values differ between "
+            "NVIDIA (warp=32, max registers per SM) and AMD (wavefront=64 on "
+            "GCN, different occupancy calculator)."
+        ),
+        "recommendation": (
+            "Review __launch_bounds__ values for AMD targets. Consider using "
+            "architecture-aware macros to set different bounds for NVIDIA vs AMD."
+        ),
+    },
 ]
 
 

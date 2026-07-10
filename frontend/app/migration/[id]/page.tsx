@@ -1,8 +1,8 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState, useCallback, useEffect, useRef } from "react";
-import { ArrowLeft, Download, RefreshCw } from "lucide-react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { ArrowLeft, Download, RefreshCw, Clock, Timer } from "lucide-react";
 import Link from "next/link";
 import Timeline from "@/components/Timeline";
 import CompilerLog from "@/components/CompilerLog";
@@ -34,6 +34,8 @@ export default function MigrationPage() {
   const [migrationStatus, setMigrationStatus] = useState<string>("QUEUED");
   const [migrationStage, setMigrationStage] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [startTime] = useState<number>(Date.now());
+  const [elapsedDisplay, setElapsedDisplay] = useState<string>("0s");
 
   // Ref to avoid stale closure in polling interval
   const isTerminalRef = useRef(false);
@@ -84,6 +86,36 @@ export default function MigrationPage() {
       clearInterval(interval);
     };
   }, [migrationId, markTerminal]);
+
+  /* ── Elapsed time counter — ticks every second while active ── */
+  useEffect(() => {
+    if (isTerminal) return;
+    const tick = setInterval(() => {
+      const secs = Math.floor((Date.now() - startTime) / 1000);
+      if (secs < 60) setElapsedDisplay(`${secs}s`);
+      else if (secs < 3600) setElapsedDisplay(`${Math.floor(secs / 60)}m ${secs % 60}s`);
+      else setElapsedDisplay(`${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`);
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [isTerminal, startTime]);
+
+  /* ── Stage timing extraction from WebSocket events ── */
+  const stageTimings = useMemo(() => {
+    const starts: Record<string, string> = {};
+    const timings: { stage: string; started: string; duration: number }[] = [];
+    for (const ev of allEvents) {
+      const stage = (ev.stage ?? ev.state ?? "").toUpperCase();
+      const status = (ev.status ?? "").toLowerCase();
+      if (!stage || stage === "COMPLETED" || stage === "FAILED") continue;
+      if (status === "started" && ev.timestamp) {
+        starts[stage] = ev.timestamp;
+      } else if ((status === "completed" || status === "failed") && starts[stage] && ev.timestamp) {
+        const ms = new Date(ev.timestamp).getTime() - new Date(starts[stage]).getTime();
+        timings.push({ stage, started: starts[stage], duration: Math.max(0, ms / 1000) });
+      }
+    }
+    return timings;
+  }, [allEvents]);
 
   /* ── WebSocket events ── */
   const handleMessage = useCallback((event: StreamEvent) => {
@@ -256,6 +288,14 @@ export default function MigrationPage() {
                 </span>
               )}
             </div>
+
+              {/* Elapsed time counter */}
+              {!isTerminal && (
+                <span className="inline-flex items-center gap-1.5 border border-themeBorder px-2.5 py-0.5 text-[10px] font-medium tracking-[0.1em] uppercase text-themeTextMuted">
+                  <Timer className="h-2.5 w-2.5 animate-spin" strokeWidth={1.5} aria-hidden="true" style={{ animationDuration: "3s" }} />
+                  {elapsedDisplay}
+                </span>
+              )}
           </div>
 
           {/* Download button */}
@@ -307,6 +347,33 @@ export default function MigrationPage() {
             </h2>
           </div>
           <Timeline migrationId={migrationId} events={allEvents} />
+
+          {/* Stage timing breakdown — shown when we have timing data */}
+          {stageTimings.length > 0 && (
+            <div className="mt-4 border border-themeBorder bg-themeCard">
+              <div className="flex items-center gap-3 border-b border-themeBorder px-4 py-3">
+                <Clock className="h-3.5 w-3.5 text-themeTextMuted" strokeWidth={1.5} aria-hidden="true" />
+                <span className="text-[10px] font-medium tracking-[0.25em] uppercase text-themeTextMuted">
+                  Stage Timings
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-8 gap-y-2 p-4 sm:grid-cols-3 lg:grid-cols-4">
+                {stageTimings.map((t) => (
+                  <div key={t.stage} className="flex items-baseline justify-between gap-2">
+                    <span className="text-[10px] font-medium tracking-[0.15em] uppercase text-themeTextMuted">
+                      {t.stage}
+                    </span>
+                    <span
+                      className="font-mono text-xs"
+                      style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--text-primary)" }}
+                    >
+                      {t.duration < 60 ? `${t.duration.toFixed(1)}s` : `${Math.floor(t.duration / 60)}m ${(t.duration % 60).toFixed(0)}s`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} aria-hidden="true" />

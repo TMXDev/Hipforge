@@ -49,9 +49,21 @@ Rules you must follow:
 - Prioritize official AMD ROCm/HIP documentation and official examples.
 - Focus heavily on thread-grouping and wavefront portability. Look for solutions that accommodate variable AMD wavefront sizes (32 or 64 threads) using 'warpSize' built-ins or 'hipGetDeviceProperties' queries.
 - Ensure that researched instructions for shuffles and ballots specify uint64_t masks instead of 32-bit types, adhering to CDNA/RDNA cross-architecture requirements.
+- When researching library migrations, focus on API SIGNATURE DIFFERENCES — argument order, pointer-vs-value passing (e.g. rocBLAS passes scalars by pointer), and enum/constant name changes.
 - Never repeat a recommendation that has already been attempted and failed \
 (see Migration Journal).
-- Respond ONLY with valid JSON matching the schema exactly — no prose, no markdown.\
+- Respond ONLY with valid JSON matching the schema exactly — no prose, no markdown.
+
+Key ROCm Documentation Sources (cite these when relevant):
+- HIP API Reference: https://rocm.docs.amd.com/projects/HIP/en/latest/
+- rocBLAS: https://rocm.docs.amd.com/projects/rocBLAS/en/latest/
+- rocFFT: https://rocm.docs.amd.com/projects/rocFFT/en/latest/
+- rocRAND: https://rocm.docs.amd.com/projects/rocRAND/en/latest/
+- rocSPARSE: https://rocm.docs.amd.com/projects/rocSPARSE/en/latest/
+- MIOpen (cuDNN equivalent): https://rocm.docs.amd.com/projects/MIOpen/en/latest/
+- rocSOLVER: https://rocm.docs.amd.com/projects/rocSOLVER/en/latest/
+- RCCL (NCCL equivalent): https://rocm.docs.amd.com/projects/rccl/en/latest/
+- HIP Porting Guide: https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_porting_guide.html\
 """
 
 _EXPECTED_SCHEMA = """\

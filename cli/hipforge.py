@@ -483,14 +483,20 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
             status_url = f"{host_url}/api/v1/migrate/{migration_id}/status"
             elapsed = 0
             interval = 5
+            # ponytail: spinner frames for visual feedback during polling
+            _SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+            spin_idx = 0
             while elapsed < poll_timeout:
                 try:
                     poll_resp = requests.get(status_url, timeout=10)
                     if poll_resp.status_code == 200:
                         final_status = poll_resp.json().get("status", "")
                         if (final_status or "").upper() in _TERMINAL:
+                            print()  # clear spinner line
                             break
-                        print(f"  Polling... status={final_status or 'pending'} ({elapsed}s elapsed)", flush=True)
+                        frame = _SPINNER[spin_idx % len(_SPINNER)]
+                        spin_idx += 1
+                        print(f"\r  {Colors.GOLD}{frame}{Colors.ENDC} Waiting... status={final_status or 'pending'} ({elapsed}s elapsed)", end="", flush=True)
                 except Exception:
                     pass
                 await asyncio.sleep(interval)
@@ -601,6 +607,10 @@ def show_interactive_help():
     print(f"      Runs the full HIPForge environment health check.")
     print(f"  {Colors.BOLD}/self-test [--arch <arch>] [--remote] [--json] [--verbose]{Colors.ENDC}")
     print(f"      Runs the official installation verification project.")
+    print(f"  {Colors.BOLD}/logs <migration_id> [--host <url>]{Colors.ENDC}")
+    print(f"      Fetches and displays compiler logs for a migration job.")
+    print(f"  {Colors.BOLD}/scan <path>{Colors.ENDC}")
+    print(f"      Scans a local project and prints file inventory and detected build system.")
     print(f"  {Colors.BOLD}/history{Colors.ENDC}")
     print(f"      Shows recent migrations executed in this session.")
     print(f"  {Colors.BOLD}/clear{Colors.ENDC}")
@@ -614,7 +624,7 @@ def run_interactive_cli():
     global default_host, default_arch, default_attempts
 
     if readline:
-        commands = ["/migrate", "/cancel", "/status", "/set", "/info", "/doctor", "/self-test", "/history", "/clear", "/help", "/exit", "/quit"]
+        commands = ["/migrate", "/cancel", "/status", "/set", "/info", "/doctor", "/self-test", "/history", "/logs", "/scan", "/clear", "/help", "/exit", "/quit"]
         configs = ["host", "arch", "attempts"]
         architectures = ["gfx906", "gfx908", "gfx90a", "gfx940", "gfx941", "gfx942", "gfx1030", "gfx1100"]
 
@@ -665,7 +675,7 @@ def run_interactive_cli():
     print(f"{Colors.BOLD}{Colors.PURPLE} / __  // // ____/ /_/ / /_/ / /_/ / /  / /_/ /  __/{Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.PURPLE}/_/ /_/___/_/    \\__, /\\__, /\\____/_/   \\__, /\\___/ {Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.PURPLE}                /____//____/           /____/       {Colors.ENDC}")
-    print(f"                  {Colors.GOLD}Premium Command Console v0.1.0{Colors.ENDC}\n")
+    print(f"                  {Colors.GOLD}Premium Command Console v1.0.0{Colors.ENDC}\n")
     print(f"Type {Colors.BOLD}/help{Colors.ENDC} for commands list, or {Colors.BOLD}/exit{Colors.ENDC} to exit.\n")
     
     while True:
@@ -924,6 +934,93 @@ def run_interactive_cli():
                 print_fail(f"Invalid /status command syntax. Use /help.")
             continue
             
+        if line.startswith("/logs"):
+            parts = shlex.split(line)
+            if len(parts) < 2:
+                print_fail("Usage: /logs <migration_id> [--host <host_url>]")
+                continue
+            logs_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
+            logs_parser.add_argument("migration_id", type=str)
+            logs_parser.add_argument("--host", type=str, default=default_host)
+            try:
+                logs_args = logs_parser.parse_args(parts[1:])
+                url = f"{logs_args.host}/api/v1/migrate/{logs_args.migration_id}/compiler-logs"
+                resp = requests.get(url, timeout=10)
+                if resp.status_code == 200:
+                    logs_data = resp.json()
+                    if not logs_data:
+                        print_warn("No compiler logs found for this migration.")
+                    else:
+                        print(f"\n{Colors.BOLD}{Colors.GOLD}=== Compiler Logs ({len(logs_data)} lines) ==={Colors.ENDC}")
+                        for entry in logs_data:
+                            lvl = (entry.get("level") or "INFO").upper()
+                            content = entry.get("content") or ""
+                            if lvl == "ERROR":
+                                print(f"  {Colors.FAIL}[{lvl}]{Colors.ENDC} {content}")
+                            elif lvl == "WARNING":
+                                print(f"  {Colors.WARNING}[{lvl}]{Colors.ENDC} {content}")
+                            else:
+                                print(f"  {Colors.GREEN}[{lvl}]{Colors.ENDC} {content}")
+                        print()
+                else:
+                    print_fail(f"Failed to fetch logs: HTTP {resp.status_code}")
+            except Exception as e:
+                print_fail(f"Failed to fetch logs: {e}")
+            continue
+
+        if line.startswith("/scan"):
+            parts = shlex.split(line)
+            if len(parts) < 2:
+                print_fail("Usage: /scan <path_to_project>")
+                continue
+            scan_path = Path(parts[1])
+            if not scan_path.exists():
+                print_fail(f"Path does not exist: {scan_path}")
+                continue
+            try:
+                # ponytail: reuse backend project_scanner if available, else do basic file scan
+                repo_root = Path(__file__).resolve().parents[1]
+                backend_path = repo_root / "backend"
+                if backend_path.exists() and str(backend_path) not in sys.path:
+                    sys.path.insert(0, str(backend_path))
+                from app.compiler.project_scanner import scan_project, project_summary_line
+                scan = scan_project(scan_path)
+                print(f"\n{Colors.BOLD}{Colors.GOLD}=== Project Scan: {scan_path.name} ==={Colors.ENDC}")
+                print(f"  {project_summary_line(scan)}")
+                print(f"  Category: {scan.get('category', 'unknown')}")
+                print(f"  Build System: {scan.get('build_system_detected', 'none')}")
+                print(f"  Compile Strategy: {scan.get('compile_strategy', 'unknown')}")
+                cu_files = scan.get('cu_files', [])
+                if cu_files:
+                    print(f"  CUDA files ({len(cu_files)}):")
+                    for f in cu_files[:20]:
+                        print(f"    - {f}")
+                    if len(cu_files) > 20:
+                        print(f"    ... and {len(cu_files) - 20} more")
+                hip_files = scan.get('hip_files', [])
+                if hip_files:
+                    print(f"  HIP files ({len(hip_files)}):")
+                    for f in hip_files[:10]:
+                        print(f"    - {f}")
+                print()
+            except ImportError:
+                # Fallback: basic file listing
+                print(f"\n{Colors.BOLD}{Colors.GOLD}=== Basic Project Scan: {scan_path.name} ==={Colors.ENDC}")
+                cu_files = list(scan_path.rglob("*.cu"))
+                hip_files = list(scan_path.rglob("*.hip"))
+                cpp_files = list(scan_path.rglob("*.cpp"))
+                makefiles = list(scan_path.rglob("Makefile")) + list(scan_path.rglob("CMakeLists.txt"))
+                print(f"  .cu files: {len(cu_files)}")
+                print(f"  .hip files: {len(hip_files)}")
+                print(f"  .cpp files: {len(cpp_files)}")
+                print(f"  Build files: {len(makefiles)}")
+                for f in cu_files[:10]:
+                    print(f"    - {f.relative_to(scan_path)}")
+                print()
+            except Exception as e:
+                print_fail(f"Scan failed: {e}")
+            continue
+
         print_warn(f"Unknown command '{line}'. Type /help for available commands.")
 
 def main():
@@ -978,6 +1075,10 @@ def main():
     history_parser.add_argument("--limit", type=int, default=20, help="Number of records to show (default: 20)")
     history_parser.add_argument("--id", type=str, default=None, help="Inspect a specific migration by ID")
     history_parser.add_argument("--host", type=str, default="http://localhost:8000", help="HIPForge host URL")
+
+    # Subcommand: scan
+    scan_parser = subparsers.add_parser("scan", help="Scan a CUDA project and print file inventory without migrating")
+    scan_parser.add_argument("project_path", type=str, help="Path to CUDA project folder or file")
     
     args = parser.parse_args()
 
@@ -1031,6 +1132,35 @@ def main():
             print_fail(f"History failed: {e}")
             sys.exit(2)
         sys.exit(0 if ok else 1)
+    elif args.command == "scan":
+        scan_path = Path(args.project_path)
+        if not scan_path.exists():
+            print_fail(f"Error: Path '{scan_path}' does not exist.")
+            sys.exit(1)
+        try:
+            repo_root = Path(__file__).resolve().parents[1]
+            backend_path = repo_root / "backend"
+            if backend_path.exists() and str(backend_path) not in sys.path:
+                sys.path.insert(0, str(backend_path))
+            from app.compiler.project_scanner import scan_project, project_summary_line
+            scan = scan_project(scan_path)
+            print(f"\n{Colors.BOLD}{Colors.GOLD}=== Project Scan: {scan_path.name} ==={Colors.ENDC}")
+            print(f"  {project_summary_line(scan)}")
+            print(f"  Category: {scan.get('category', 'unknown')}")
+            print(f"  Build System: {scan.get('build_system_detected', 'none')}")
+            print(f"  Compile Strategy: {scan.get('compile_strategy', 'unknown')}")
+            cu_files = scan.get('cu_files', [])
+            if cu_files:
+                print(f"  CUDA files ({len(cu_files)}):")
+                for f in cu_files:
+                    print(f"    - {f}")
+            print()
+        except ImportError:
+            print_fail("Backend project scanner not available. Run from the HIPForge source checkout.")
+            sys.exit(1)
+        except Exception as e:
+            print_fail(f"Scan failed: {e}")
+            sys.exit(1)
     else:
         # ponytail: no args / unknown subcommand → help and exit, not an interactive shell
         parser.print_help()
