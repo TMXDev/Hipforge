@@ -95,6 +95,8 @@ async def get_compiler_logs_v1(migration_id: str):
     validate_migration_id(migration_id)
     from app.redis.client import redis_client
     from app.redis.keys import compiler_log_key
+    if not await redis_client.get(status_key(migration_id)) and not await redis_client.hgetall(metadata_key(migration_id)):
+        raise HTTPException(status_code=404, detail="Migration not found")
     
     c_key = compiler_log_key(migration_id)
     logs_raw = await redis_client.lrange(c_key, 0, -1)
@@ -106,4 +108,3 @@ async def get_compiler_logs_v1(migration_id: str):
 async def websocket_stream(migration_id: str, websocket: WebSocket):
     validate_migration_id(migration_id)
     await handle_websocket_stream(websocket, migration_id)
-

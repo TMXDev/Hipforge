@@ -1101,6 +1101,8 @@ async def handle_compiling(context: WorkflowContext) -> str:
         f.write(f"=== HIPForge Compile Attempt {attempt_num} ===\n")
         if "command" in result:
             f.write(f"Command: {result['command']}\n")
+        if "returncode" in result:
+            f.write(f"Return code: {result['returncode']}\n")
         f.write(f"Source: {hip_source}\n")
         f.write(f"Binary: {binary_path}\n\n")
         f.write("--- stdout ---\n")

@@ -193,6 +193,7 @@ class HipccRunner:
                     )
                     return {
                         "success": False,
+                        "returncode": 1,
                         "binary_path": "",
                         "errors": parse_compiler_errors(stderr),
                         "stdout": "",
@@ -204,6 +205,7 @@ class HipccRunner:
                     f.write("/* HIPForge compiled mock binary */\n")
                 return {
                     "success": True,
+                    "returncode": 0,
                     "binary_path": output_path,
                     "errors": [],
                     "stdout": "Compiled successfully (mock)",
@@ -221,6 +223,7 @@ class HipccRunner:
                 )
                 return {
                     "success": False,
+                    "returncode": -1,
                     "binary_path": "",
                     "errors": [fallback_err],
                     "stdout": "",
@@ -293,6 +296,32 @@ class HipccRunner:
 
         from app.config.settings import settings
         timeout_sec = getattr(settings, "TIMEOUT_COMPILE", 60)
+        if shutil.which("hipcc") and (not is_makefile or shutil.which("make")):
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout_sec, cwd=working_dir)
+                success = result.returncode == 0
+                errors = [] if success else parse_compiler_errors(result.stderr)
+                if not success and not errors:
+                    errors = [CompilerError(file=source_path, line=1, column=1, message=result.stderr or result.stdout or "Compilation failed with unknown error.", code="E999")]
+                return {
+                    "success": success,
+                    "returncode": result.returncode,
+                    "binary_path": output_path if success else "",
+                    "errors": errors,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "command": " ".join(cmd),
+                }
+            except subprocess.TimeoutExpired as exc:
+                return {
+                    "success": False,
+                    "returncode": -1,
+                    "binary_path": "",
+                    "errors": [CompilerError(file=source_path, line=1, column=1, message=f"Compilation timed out after {timeout_sec} seconds.", code="TIMEOUT")],
+                    "stdout": exc.stdout or "",
+                    "stderr": f"Compilation timed out after {timeout_sec} seconds.",
+                    "command": " ".join(cmd),
+                }
         try:
             sandbox_res = run_sandboxed_compiler(workspace_path, cmd, timeout_sec=timeout_sec, working_dir=working_dir)
             timed_out = sandbox_res.get("timeout", False)
@@ -321,6 +350,7 @@ class HipccRunner:
                 
             return {
                 "success": success,
+                "returncode": sandbox_res["returncode"],
                 "binary_path": output_path if success else "",
                 "errors": errors,
                 "stdout": sandbox_res["stdout"],
@@ -339,6 +369,7 @@ class HipccRunner:
             )
             return {
                 "success": False,
+                "returncode": -1,
                 "binary_path": "",
                 "errors": [fallback_err],
                 "stdout": "",
@@ -353,5 +384,3 @@ def run_hipcc(source_path: str, output_path: str, target_arch: str = None, works
     Instantiates and executes the real HipccRunner tool.
     """
     return HipccRunner().run_hipcc(source_path, output_path, target_arch, workspace_path)
-
-

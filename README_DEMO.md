@@ -30,7 +30,8 @@ To ensure the audience understands whether the run is simulated or validated, ex
   * **Note**: Make it clear to the audience that this run is a simulation and does not invoke real compiler validation.
 * **Real Mode (Validated Run)**:
   * Set `USE_MOCK_COMPILER=false` and `USE_MOCK_AI=false`.
-  * Requires building the sandbox image (`Dockerfile.sandbox`) and providing a `FIREWORKS_API_KEY`.
+  * Requires `hipcc` and `hipify-clang` on the backend host PATH (native ROCm), or the sandbox image (`Dockerfile.sandbox`), plus a `FIREWORKS_API_KEY`.
+  * Native ROCm host mode does not require a Docker daemon.
   * Invokes the real AMD compilation toolchain.
 
 ---
