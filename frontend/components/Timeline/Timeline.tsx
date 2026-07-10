@@ -101,39 +101,58 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
           }
         }
 
-        // 2. Set current active stage if running
+        // 2. Apply deterministic status propagation from statusData
         if (statusData) {
-          const repairStatus = (statusData.ai_repair_status || "").toLowerCase();
-          if (repairStatus === "succeeded" || repairStatus === "failed" || (statusData.compilation_history && statusData.compilation_history.length > 1)) {
-            const analyzing = initial.get("ANALYZING");
-            if (analyzing && analyzing.status === "pending") {
-              initial.set("ANALYZING", { ...analyzing, status: "completed", message: "AI code repair completed." });
-            }
-            const patching = initial.get("PATCHING");
-            if (patching && patching.status === "pending") {
-              initial.set("PATCHING", { ...patching, status: "completed", message: "Code patches successfully generated." });
-            }
-          }
-
           const currentStatus = (statusData.status || "").toUpperCase();
           const currentStage = (statusData.stage || "").toUpperCase() as JobState;
 
+          const repairStatus = (statusData.ai_repair_status || "").toLowerCase();
+          const hasAiRepair = repairStatus === "succeeded" || repairStatus === "failed" || (statusData.compilation_history && statusData.compilation_history.length > 1);
+
+          const orderedStages = STAGE_META.map(m => m.state);
+          let targetIndex = orderedStages.indexOf(currentStage);
+          if (targetIndex === -1) {
+            targetIndex = orderedStages.indexOf("COMPLETED");
+          }
+
           if (currentStatus === "FAILED") {
             failed = true;
-            const compState = initial.get("COMPLETED");
-            if (compState) {
-              initial.set("COMPLETED", { ...compState, status: "failed" });
+          }
+
+          for (const meta of STAGE_META) {
+            const stateKey = meta.state;
+            const current = initial.get(stateKey);
+            if (!current) continue;
+
+            const currentIndex = orderedStages.indexOf(stateKey);
+
+            // Handle AI repair conditional stages
+            if (stateKey === "ANALYZING" || stateKey === "PATCHING") {
+              if (!hasAiRepair) {
+                initial.set(stateKey, { ...current, status: "skipped" });
+                continue;
+              }
             }
-          } else if (currentStatus === "COMPLETED") {
-            const compState = initial.get("COMPLETED");
-            if (compState) {
-              initial.set("COMPLETED", { ...compState, status: "completed" });
-            }
-          } else if (currentStatus === "RUNNING" || currentStatus === "QUEUED") {
-            const activeState = currentStage === "FAILED" ? "COMPLETED" : currentStage;
-            const activeStage = initial.get(activeState);
-            if (activeStage && activeStage.status === "pending") {
-              initial.set(activeState, { ...activeStage, status: "active" });
+
+            if (currentStatus === "COMPLETED") {
+              initial.set(stateKey, { ...current, status: "completed" });
+            } else if (currentStatus === "FAILED") {
+              if (stateKey === currentStage) {
+                initial.set(stateKey, { ...current, status: "failed" });
+              } else if (currentIndex < targetIndex) {
+                initial.set(stateKey, { ...current, status: "completed" });
+              } else {
+                initial.set(stateKey, { ...current, status: "skipped" });
+              }
+            } else {
+              // RUNNING or QUEUED
+              if (stateKey === currentStage) {
+                initial.set(stateKey, { ...current, status: "active" });
+              } else if (currentIndex < targetIndex) {
+                initial.set(stateKey, { ...current, status: "completed" });
+              } else {
+                initial.set(stateKey, { ...current, status: "pending" });
+              }
             }
           }
         }
@@ -201,13 +220,13 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
     let hasAnalyzing = false;
     let hasPatching = false;
 
-    // Check if stages are not pending
+    // Check if stages are not pending or skipped
     const analyzingStage = stages.get("ANALYZING");
-    if (analyzingStage && analyzingStage.status !== "pending") {
+    if (analyzingStage && analyzingStage.status !== "pending" && analyzingStage.status !== "skipped") {
       hasAnalyzing = true;
     }
     const patchingStage = stages.get("PATCHING");
-    if (patchingStage && patchingStage.status !== "pending") {
+    if (patchingStage && patchingStage.status !== "pending" && patchingStage.status !== "skipped") {
       hasPatching = true;
     }
 
