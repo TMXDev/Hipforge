@@ -78,6 +78,7 @@ class WorkflowContext:
 
         # Exact compile command from the most recent hipcc/make invocation.
         self.last_compile_command: str = ""
+        self.actual_compiled_architecture: str = ""
 
         # ── ANALYZING stage output ──────────────────────────────────────
         # Structured result from the Analysis Agent.
@@ -100,6 +101,13 @@ class WorkflowContext:
         # Raw source strings from all previous patch attempts (most recent last).
         # Passed to the Patch Agent so it can avoid repeating the same changes.
         self.patch_history: List[str] = []
+
+        # ── AI repair context & dedup ────────────────────────────────────
+        # Focused packet built in handle_analyzing and passed to both agents.
+        self.repair_context: Optional[Dict[str, Any]] = None
+        # Set of (stderr_hash, source_hash, attempt) fingerprints already tried.
+        # Prevents duplicate AI calls for identical failures.
+        self.seen_patch_fingerprints: set = set()
 
         # ── RESEARCHING stage output ────────────────────────────────────
         # Persisted research context (findings summary) to be fed into

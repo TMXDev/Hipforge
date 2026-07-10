@@ -32,10 +32,14 @@ The patch function returns the FULL corrected source file as a string.
 The PATCHING state handler is responsible for writing it to disk.
 """
 
+import difflib
+import hashlib
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.agents.base_agent import get_ai_client
 
@@ -294,6 +298,156 @@ def _build_patch_metadata(
                 "lines": changed_line_nums[:20],  # cap at 20 for readability
             }
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Patch safety validation
+# ---------------------------------------------------------------------------
+
+# ponytail: regex compiled once; catches inline PTX, warp/lane primitives, sync
+_ARCH_SENSITIVE_RE = re.compile(
+    r"\b(asm\s*volatile|__asm__|ptx\b|warpSize|__shfl|__ballot|__any_sync"
+    r"|__all_sync|__activemask|__lane_id|lane_id|__syncthreads|__syncwarp"
+    r"|__threadfence|__threadfence_block|__threadfence_system"
+    r"|wavefront|__wavefront_size|__builtin_amdgcn)",
+    re.IGNORECASE,
+)
+
+# How many changed lines are "too many" relative to the diagnosed error scope.
+# ponytail: flat threshold; switch to per-file-LOC ratio if that proves noisy.
+_MAX_CHANGED_LINES = int(os.getenv("HIPFORGE_PATCH_MAX_CHANGED_LINES", "120"))
+# Fraction of original file that can be removed before we call it a broad rewrite.
+_MAX_REMOVAL_FRACTION = float(os.getenv("HIPFORGE_PATCH_MAX_REMOVAL_FRACTION", "0.40"))
+
+
+def validate_patch(
+    original: str,
+    patched: str,
+    workspace_root: str,
+    patch_file_path: str,
+    analysis: Dict[str, Any],
+    runtime_validated: bool = False,
+) -> Dict[str, Any]:
+    """
+    Safety gate for an AI-generated patch.  Returns a result dict:
+
+      accepted        bool   – True when the patch passes all checks.
+      reason          str    – Human-readable accept/reject reason.
+      diff            str    – Unified diff of original → patched.
+      changed_lines   int    – Lines added + deleted.
+      before_hash     str    – SHA-256 hex of original source.
+      after_hash      str    – SHA-256 hex of patched source.
+      arch_warning    str|None – Non-None when arch-sensitive code was changed
+                                 without runtime validation.
+      diagnosis       str    – AI diagnosis / root_cause from analysis.
+    """
+    before_hash = hashlib.sha256(original.encode("utf-8", errors="replace")).hexdigest()
+    after_hash = hashlib.sha256(patched.encode("utf-8", errors="replace")).hexdigest()
+
+    orig_lines = original.splitlines(keepends=True)
+    patch_lines = patched.splitlines(keepends=True)
+
+    diff_lines = list(difflib.unified_diff(
+        orig_lines, patch_lines,
+        fromfile="original", tofile="patched",
+        lineterm="",
+    ))
+    diff_text = "".join(diff_lines)
+
+    added = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
+    changed_lines = added + removed
+
+    diagnosis = analysis.get("root_cause") or analysis.get("summary") or "(no diagnosis)"
+
+    # ── Reject: writes outside workspace ────────────────────────────────
+    try:
+        resolved = Path(patch_file_path).resolve()
+        Path(resolved).relative_to(Path(workspace_root).resolve())
+    except ValueError:
+        return {
+            "accepted": False,
+            "reason": f"patch path {patch_file_path!r} is outside workspace {workspace_root!r}",
+            "diff": diff_text, "changed_lines": changed_lines,
+            "before_hash": before_hash, "after_hash": after_hash,
+            "arch_warning": None, "diagnosis": diagnosis,
+        }
+
+    # ── Reject: too many lines changed (broad rewrite) ──────────────────
+    if changed_lines > _MAX_CHANGED_LINES:
+        return {
+            "accepted": False,
+            "reason": (
+                f"patch changes {changed_lines} lines; exceeds limit of {_MAX_CHANGED_LINES}. "
+                "Likely a broad rewrite rather than a targeted fix."
+            ),
+            "diff": diff_text, "changed_lines": changed_lines,
+            "before_hash": before_hash, "after_hash": after_hash,
+            "arch_warning": None, "diagnosis": diagnosis,
+        }
+
+    # ── Reject: removes too large a fraction of the original file ────────
+    if orig_lines and removed / max(len(orig_lines), 1) > _MAX_REMOVAL_FRACTION:
+        return {
+            "accepted": False,
+            "reason": (
+                f"patch removes {removed} of {len(orig_lines)} original lines "
+                f"({removed / len(orig_lines):.0%}); looks like an unrelated rewrite."
+            ),
+            "diff": diff_text, "changed_lines": changed_lines,
+            "before_hash": before_hash, "after_hash": after_hash,
+            "arch_warning": None, "diagnosis": diagnosis,
+        }
+
+    # ── Reject: deletes functions not mentioned in the repair plan ────────
+    # A function definition line that appears in original but not in patched
+    # is flagged only when the analysis doesn't mention that function name.
+    affected_files = set(analysis.get("affected_files") or [])
+    repair_text = " ".join(analysis.get("repair_plan") or []) + " " + diagnosis
+    _fn_re = re.compile(r"^[-].*\b(?:void|__global__|__device__|__host__|int|float|double)\s+(\w+)\s*\(")
+    deleted_fns = []
+    for dl in diff_lines:
+        m = _fn_re.match(dl)
+        if m:
+            fn_name = m.group(1)
+            # allow if repair plan explicitly names it
+            if fn_name not in repair_text:
+                deleted_fns.append(fn_name)
+    if deleted_fns:
+        return {
+            "accepted": False,
+            "reason": (
+                f"patch deletes function(s) not mentioned in repair plan: {deleted_fns}. "
+                "Suspected unrelated removal."
+            ),
+            "diff": diff_text, "changed_lines": changed_lines,
+            "before_hash": before_hash, "after_hash": after_hash,
+            "arch_warning": None, "diagnosis": diagnosis,
+        }
+
+    # ── Semantic warning: arch-sensitive code changed without runtime validation
+    arch_warning: Optional[str] = None
+    changed_content = "".join(
+        l[1:] for l in diff_lines
+        if (l.startswith("+") and not l.startswith("+++"))
+        or (l.startswith("-") and not l.startswith("---"))
+    )
+    if _ARCH_SENSITIVE_RE.search(changed_content) and not runtime_validated:
+        arch_warning = (
+            "Patch touches inline PTX, warp size, lane ID, or synchronization primitives. "
+            "Runtime validation was not performed — correctness on target architecture is unverified."
+        )
+
+    return {
+        "accepted": True,
+        "reason": f"patch accepted ({changed_lines} line(s) changed)",
+        "diff": diff_text,
+        "changed_lines": changed_lines,
+        "before_hash": before_hash,
+        "after_hash": after_hash,
+        "arch_warning": arch_warning,
+        "diagnosis": diagnosis,
     }
 
 

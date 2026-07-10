@@ -684,6 +684,10 @@ async def handle_hipify(context: WorkflowContext) -> str:
                 content = re.sub(r"\bnvcc\b", "hipcc", content)
                 # Replace CUDA source extensions (.cu) with HIP (.hip) in build targets
                 content = re.sub(r"\b([\w\-_./]+)\.cu\b", r"\1.hip", content)
+                # Propagate target architecture if specified
+                target_arch = getattr(context, "target_gpu_architecture", None)
+                if target_arch:
+                    content = re.sub(r"\bhipcc\b(?! --offload-arch=)", f"hipcc --offload-arch={target_arch}", content)
                 dest.write_text(content, encoding="utf-8")
                 logger.info("[HIPIFY] Translated build script paths and compiler: %s", dest)
             except Exception as build_err:
@@ -1170,6 +1174,12 @@ async def handle_compiling(context: WorkflowContext) -> str:
             break
 
     if not hip_source:
+        cmake_lists = list(generated_dir.rglob("CMakeLists.txt"))
+        if cmake_lists:
+            hip_source = str(cmake_lists[0])
+            logger.info("[COMPILING] Using CMakeLists.txt: %s", hip_source)
+
+    if not hip_source:
         makefile_hipforge = generated_dir / "Makefile.hipforge"
         if makefile_hipforge.exists():
             import shutil
@@ -1231,7 +1241,16 @@ async def handle_compiling(context: WorkflowContext) -> str:
         logger.warning("[COMPILING] Failed to read target architecture from Redis: %s", exc)
 
     is_makefile = Path(hip_source).name.lower() in ("makefile", "makefile.hipforge")
-    cmd_str = "make" if is_makefile else f"hipcc {hip_source} -o {binary_path} --offload-arch={target_arch or 'gfx90a'}"
+    is_cmake = Path(hip_source).name.lower() == "cmakelists.txt"
+    if is_makefile:
+        cmd_str = "make"
+        if target_arch:
+            cmd_str += f" ARCH={target_arch} AMDGPU_TARGETS={target_arch} GPU_TARGETS={target_arch} HIP_ARCH={target_arch}"
+    elif is_cmake:
+        cmd_str = "cmake -B build ... && cmake --build build"
+    else:
+        cmd_str = f"hipcc {hip_source} -o {binary_path} --offload-arch={target_arch or 'gfx90a'}"
+        
     await publish_event(
         context.migration_id,
         "COMPILING",
@@ -1309,6 +1328,20 @@ async def handle_compiling(context: WorkflowContext) -> str:
     compiler_errors = result.get("errors", [])
     last_stderr = result.get("stderr", "")
     context.last_compile_command = result.get("command", "")
+    context.actual_compiled_architecture = result.get("actual_arch", "")
+
+    try:
+        from app.redis.client import redis_client
+        from app.redis.keys import metadata_key
+        await redis_client.hset(
+            metadata_key(context.migration_id),
+            mapping={
+                "actual_compiled_architecture": context.actual_compiled_architecture or "N/A",
+                "last_compile_command": context.last_compile_command or ""
+            }
+        )
+    except Exception as redis_err:
+        logger.warning("[COMPILING] Failed to save actual_compiled_architecture/last_compile_command to Redis: %s", redis_err)
 
     if comp_ok:
         logger.info("[COMPILING] Compilation succeeded on attempt %d. Commencing Semantic Post-Validation...", attempt_num)
@@ -1591,7 +1624,7 @@ async def handle_analyzing(context: WorkflowContext) -> str:
     # Safeguard 1b: UNSUPPORTED_FEATURE with arch pattern → not patchable by AI
     if classification == "UNSUPPORTED_FEATURE":
         import re
-        if re.search(r'gfx\d{4}', stderr_val):
+        if not context.compiler_errors and re.search(r'gfx\d{4}', stderr_val):
             logger.error("[ANALYZING] Unsupported GPU architecture detected. Skipping AI patching.")
             context.infrastructure_error = True
             context.analysis_result = {
@@ -1682,6 +1715,18 @@ async def handle_analyzing(context: WorkflowContext) -> str:
 
     # Read optimized semantic slice around the compiler error
     hip_source_path = context.hipify_output_path
+    if context.compiler_errors:
+        workspace = Path(context.workspace_path)
+        generated_dir = workspace / "generated"
+        for err in context.compiler_errors:
+            err_file = err.file
+            resolved_path = Path(err_file)
+            if not resolved_path.is_absolute():
+                resolved_path = generated_dir / err_file
+            if resolved_path.exists():
+                hip_source_path = str(resolved_path)
+                logger.info("[ANALYZING] Target file for analysis selected from compiler error: %s", hip_source_path)
+                break
     source_code = ""
     if hip_source_path:
         try:
@@ -1710,6 +1755,68 @@ async def handle_analyzing(context: WorkflowContext) -> str:
         len(context.compiler_errors),
     )
 
+    # ── Build focused repair-context packet (req #1) ─────────────────────────
+    import hashlib
+    import shutil
+
+    # Detect ROCm and compiler versions lazily (best-effort, no subprocess on CI)
+    rocm_version: str | None = None
+    compiler_version: str | None = None
+    try:
+        rocm_smi = shutil.which("rocminfo") or shutil.which("rocm-smi")
+        if rocm_smi:
+            import subprocess
+            rv = subprocess.run([rocm_smi, "--version"], capture_output=True, text=True, timeout=3)
+            rocm_version = (rv.stdout or rv.stderr).strip().splitlines()[0][:80] if rv.returncode == 0 else None
+    except Exception:
+        pass
+    try:
+        hipcc_path = shutil.which("hipcc")
+        if hipcc_path:
+            import subprocess
+            cv = subprocess.run([hipcc_path, "--version"], capture_output=True, text=True, timeout=3)
+            compiler_version = (cv.stdout or cv.stderr).strip().splitlines()[0][:80] if cv.returncode == 0 else None
+    except Exception:
+        pass
+
+    repair_context = {
+        "failed_stage": "COMPILING",
+        "compile_command": getattr(context, "last_compile_command", ""),
+        "raw_stderr": context.last_compile_stderr or "",
+        "target_arch": getattr(context, "target_gpu_architecture", "gfx90a"),
+        "rocm_version": rocm_version,
+        "compiler_version": compiler_version,
+        "source_file": hip_source_path or "",
+        "remaining_budget": getattr(context, "retry_budget", 0) - context.current_attempt,
+    }
+    context.repair_context = repair_context
+
+    # ── Patch fingerprint dedup (req #6) ─────────────────────────────────────
+    # Skip AI if we've already tried this exact (stderr, source, attempt) combo.
+    stderr_hash = hashlib.sha256((context.last_compile_stderr or "").encode()).hexdigest()[:16]
+    source_hash = hashlib.sha256(source_code.encode()).hexdigest()[:16]
+    fingerprint = (stderr_hash, source_hash, context.current_attempt)
+    seen = getattr(context, "seen_patch_fingerprints", set())
+    if fingerprint in seen:
+        logger.warning(
+            "[ANALYZING] Duplicate patch fingerprint detected (attempt %d). Skipping AI to prevent loop.",
+            context.current_attempt,
+        )
+        context.infrastructure_error = True
+        context.error_category = "AI_ERROR"
+        context.analysis_result = {
+            "confidence": 0.0,
+            "diagnosis": "Duplicate patch fingerprint — same error and source seen before at this attempt index.",
+            "root_cause": "Duplicate patch attempt detected. Identical error and source observed before.",
+            "summary": "Duplicate patch fingerprint — stopping to prevent infinite loop.",
+            "affected_files": [], "affected_lines": [], "repair_plan": [], "requires_human": True,
+            "blocker": "Same (stderr, source, attempt) fingerprint repeated.",
+        }
+        raise RuntimeError("Duplicate patch fingerprint — infinite loop prevented.")
+    seen.add(fingerprint)
+    context.seen_patch_fingerprints = seen
+    # ─────────────────────────────────────────────────────────────────────────
+
     # ponytail: call analyze with timeout
     import asyncio
     from app.config.settings import settings
@@ -1722,6 +1829,7 @@ async def handle_analyzing(context: WorkflowContext) -> str:
                 source_code=source_code,
                 attempt=context.current_attempt,
                 migration_journal=context.migration_journal,
+                repair_context=repair_context,
                 context=context,
             ),
             timeout=timeout
@@ -1786,6 +1894,18 @@ async def handle_patching(context: WorkflowContext) -> str:
     # ── Read current source ─────────────────────────────────────────────
     source_code = ""
     hip_source_path = context.hipify_output_path
+    if context.compiler_errors:
+        workspace = Path(context.workspace_path)
+        generated_dir = workspace / "generated"
+        for err in context.compiler_errors:
+            err_file = err.file
+            resolved_path = Path(err_file)
+            if not resolved_path.is_absolute():
+                resolved_path = generated_dir / err_file
+            if resolved_path.exists():
+                hip_source_path = str(resolved_path)
+                logger.info("[PATCHING] Target file for patch selected from compiler error: %s", hip_source_path)
+                break
     if hip_source_path:
         try:
             source_code = Path(hip_source_path).read_text(encoding="utf-8", errors="replace")
@@ -1805,12 +1925,24 @@ async def handle_patching(context: WorkflowContext) -> str:
 
     attempt_num = context.current_attempt + 1
     if hip_source_path:
-        stem = Path(hip_source_path).stem
-        filename = f"{stem}.hip"
+        filename = Path(hip_source_path).name
     else:
         filename = "kernel.hip"
 
     patch_path = patches_dir / f"patch_attempt_{attempt_num:03d}_{filename}"
+
+    # ── Workspace path containment check (req #4) ─────────────────────────────
+    # Ensure patch_path resolves inside workspace/patches/ — never modifies
+    # uploaded source files or anything outside the generated workspace.
+    try:
+        resolved_patch = patch_path.resolve()
+        resolved_patches_dir = patches_dir.resolve()
+        resolved_patch.relative_to(resolved_patches_dir)  # raises ValueError if outside
+    except ValueError:
+        raise RuntimeError(
+            f"[PATCHING] Security: patch path {patch_path} is outside workspace patches dir {patches_dir}"
+        )
+    # ──────────────────────────────────────────────────────────
 
     logger.info(
         "[PATCHING] Generating patch for attempt %d. Output: %s",
@@ -1866,6 +1998,35 @@ async def handle_patching(context: WorkflowContext) -> str:
         )
         raise RuntimeError("Patch Agent returned unchanged source code. Infinite loop prevented.")
 
+    # ── Safety-validate the AI patch before accepting it ─────────────────
+    from app.agents.patch_agent import validate_patch
+    vr = validate_patch(
+        original=source_code,
+        patched=patched_source,
+        workspace_root=context.workspace_path,
+        patch_file_path=str(patch_path),
+        analysis=analysis,
+        runtime_validated=(
+            getattr(context, "runtime_validation_status", None) == "PASSED"
+        ),
+    )
+    logger.info(
+        "[PATCHING] Safety validation: accepted=%s reason=%s changed_lines=%d "
+        "before_hash=%.8s after_hash=%.8s",
+        vr["accepted"], vr["reason"], vr["changed_lines"],
+        vr["before_hash"], vr["after_hash"],
+    )
+    if vr["arch_warning"]:
+        logger.warning("[PATCHING] ARCH WARNING: %s", vr["arch_warning"])
+    # Persist validation record for the report / audit trail
+    context.patch_validation = vr
+
+    if not vr["accepted"]:
+        logger.error("[PATCHING] Patch REJECTED: %s", vr["reason"])
+        context.error_category = "AI_ERROR"
+        context.failure_reason = f"Patch rejected by safety gate: {vr['reason']}"
+        raise RuntimeError(f"[PATCHING] Patch safety gate rejected patch: {vr['reason']}")
+
     # ── Write patched file to workspace ─────────────────────────────────
     # Run launcher safety checks post-processing on the patched source to ensure safety guards are preserved/added
     try:
@@ -1901,6 +2062,68 @@ async def handle_patching(context: WorkflowContext) -> str:
 
     logger.info("[PATCHING] Patched source written to %s", patch_path)
 
+    # ── Compile-validate-rollback (req #5) ───────────────────────────────────
+    # Run a quick compile-check on the patch before committing it.
+    # If it produces more errors than before, roll back to the pre-patch source.
+    try:
+        from app.compiler.sca import analyze as sca_analyze
+        import tempfile
+
+        if patch_path.suffix.lower() in (".h", ".cuh", ".hpp", ".hxx"):
+            logger.info("[PATCHING] Patched file is a header. Skipping compile probe.")
+            probe_ok = True
+            probe_errors = []
+            new_error_count = 0
+            prev_error_count = 0
+        else:
+            from app.compiler.hipcc_runner import run_hipcc
+            binary_tmp = str(workspace / "generated" / f"_patch_probe_{attempt_num:03d}")
+            target_arch = getattr(context, "target_gpu_architecture", "gfx90a")
+            probe_result = await asyncio.to_thread(
+                run_hipcc,
+                str(patch_path),
+                binary_tmp,
+                target_arch,
+                context.workspace_path,
+            )
+            probe_errors = probe_result.get("errors", [])
+            probe_ok = probe_result.get("success", False)
+
+            prev_error_count = len(context.compiler_errors or [])
+            new_error_count = len(probe_errors)
+
+        if probe_ok:
+            logger.info("[PATCHING] Compile probe PASSED on patched source. Keeping patch.")
+            # Run static validation too
+            try:
+                sca_result = await asyncio.to_thread(sca_analyze, str(patch_path))
+                high_sev = [i for i in sca_result.get("issues", []) if i.severity == "high"]
+                if high_sev:
+                    logger.warning(
+                        "[PATCHING] Compile probe passed but SCA found %d high-severity issue(s). Keeping patch (SCA handled in COMPILING).",
+                        len(high_sev),
+                    )
+            except Exception as sca_exc:
+                logger.debug("[PATCHING] SCA probe skipped: %s", sca_exc)
+        elif new_error_count > prev_error_count:
+            logger.warning(
+                "[PATCHING] Compile probe FAILED with MORE errors (%d > %d). Rolling back patch.",
+                new_error_count, prev_error_count,
+            )
+            # Restore the pre-patch source
+            patch_path.write_text(source_code, encoding="utf-8")
+            patched_source = source_code
+            logger.info("[PATCHING] Rolled back to pre-patch source.")
+        else:
+            logger.info(
+                "[PATCHING] Compile probe failed but error count did not increase (%d ≤ %d). Keeping patch.",
+                new_error_count, prev_error_count,
+            )
+    except Exception as probe_exc:
+        # ponytail: probe failure is non-fatal — COMPILING will be the authoritative check
+        logger.warning("[PATCHING] Compile probe skipped due to exception: %s", probe_exc)
+    # ──────────────────────────────────────────────────────────
+
     # Update file lifecycle metadata for the patched file
     try:
         import hashlib
@@ -1935,6 +2158,17 @@ async def handle_patching(context: WorkflowContext) -> str:
         changed_count,
         metadata.get("summary", "")[:120],
     )
+
+    # ── COMPILE_VALIDATED_WITH_WARNING when arch warnings remain unresolved ──
+    if (
+        getattr(context, "patch_validation", {}).get("arch_warning")
+        and getattr(context, "runtime_validation_status", None) != "PASSED"
+    ):
+        context.compile_status = "COMPILE_VALIDATED_WITH_WARNING"
+        logger.warning(
+            "[PATCHING] compile_status set to COMPILE_VALIDATED_WITH_WARNING "
+            "due to unresolved architecture-sensitive semantic warning."
+        )
 
     # ── Update context ────────────────────────────────────────────────────
     # Point the next COMPILING stage at the patched file

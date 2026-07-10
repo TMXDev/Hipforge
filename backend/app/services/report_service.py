@@ -222,6 +222,8 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Start Time**: `{start_time}`",
         f"- **End Time**: `{now_str}`",
         f"- **Target GPU Architecture**: `{getattr(context, 'target_gpu_architecture', 'gfx90a')}`",
+        f"- **Actual Compiled Architecture**: `{getattr(context, 'actual_compiled_architecture', 'N/A')}`",
+        f"- **Last Compile Command**: `{getattr(context, 'last_compile_command', 'N/A')}`",
         f"- **Architecture Selection Source**: `{getattr(context, 'architecture_selection_source', 'unknown')}`",
         f"- **Architecture Confidence**: `{getattr(context, 'architecture_confidence', 'LOW')}`",
         f"- **Retry Budget**: `{getattr(context, 'retry_budget', 0)}`",
@@ -711,6 +713,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     report_data["build_system"] = project_scan_json.get("build_system", "none")
     report_data["compiler_mode"] = compiler_mode
     report_data["compile_command"] = getattr(context, "last_compile_command", "")
+    report_data["actual_compiled_architecture"] = getattr(context, "actual_compiled_architecture", "N/A")
     report_data["compile_status"] = compile_status
     report_data["translation_status"] = "PASSED" if bool(getattr(context, "hipify_output_path", None)) else "FAILED"
     report_data["static_validation_status"] = getattr(context, "static_validation_status", "NOT_RUN")
@@ -753,6 +756,8 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "failure_category": failure_category,
         "recommended_next_action": next_action,
         "target_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
+        "actual_compiled_architecture": getattr(context, "actual_compiled_architecture", "N/A"),
+        "last_compile_command": getattr(context, "last_compile_command", "N/A"),
         "repair_budget": getattr(context, "retry_budget", 0),
         "compile_attempts": len(compilation_history),
         "ai_repair_cycles": len(analysis_summaries),

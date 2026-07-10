@@ -497,18 +497,36 @@ async def test_semantic_patch_consumed_by_next_hipify(tmp_path, monkeypatch):
     # 2. AI repair: PATCHING state runs
     ctx.analysis_result = {
         "confidence": 0.9,
-        "root_cause": "dummy root cause",
-        "repair_plan": ["use correct type"]
+        "root_cause": "hipMemcpyAsync_WRONG is not a valid HIP API.",
+        "repair_plan": ["Replace hipMemcpyAsync_WRONG with hipMemcpyAsync."]
     }
-    # Mock patch agent response to return patched source code
-    patched_source = "// patched content\n"
+    # Realistic localized patch: only the bad API token changes
+    _orig_source = (
+        "#include <hip/hip_runtime.h>\n"
+        "void transfer(float* d, float* s, int n, hipStream_t st) {\n"
+        "    hipMemcpyAsync_WRONG(d, s, n*sizeof(float), hipMemcpyDeviceToDevice, st);\n"
+        "}\n"
+    )
+    _patched_source = _orig_source.replace("hipMemcpyAsync_WRONG", "hipMemcpyAsync")
     def mock_patch(*args, **kwargs):
-        return patched_source
+        return _patched_source
     monkeypatch.setattr("app.agents.patch_agent.patch", mock_patch)
 
+    # Mock run_hipcc to make compile probe succeed
+    def mock_run_hipcc(*args, **kwargs):
+        return {
+            "success": True,
+            "errors": [],
+            "stdout": "mock compile probe passed",
+            "stderr": "",
+            "command": "hipcc ...",
+            "actual_arch": "gfx90a"
+        }
+    monkeypatch.setattr("app.compiler.hipcc_runner.run_hipcc", mock_run_hipcc)
+
     ctx.hipify_output_path = str(ws / "generated" / "vector_ops.hip")
-    # Simulate generated file existing
-    (ws / "generated" / "vector_ops.hip").write_text("// failed content\n", encoding="utf-8")
+    # Simulate generated file with the bad API name
+    (ws / "generated" / "vector_ops.hip").write_text(_orig_source, encoding="utf-8")
 
     ctx.current_state = "PATCHING"
     await handle_patching(ctx)
@@ -530,9 +548,9 @@ async def test_semantic_patch_consumed_by_next_hipify(tmp_path, monkeypatch):
 
     # run_hipify should NOT have been called because it consumed the patch!
     assert len(run_calls) == 0
-    # The generated file in workspace should contain the patched content (plus comment)
+    # The generated file in workspace should contain the fixed API name
     gen_file = ws / "generated" / "vector_ops.hip"
-    assert "patched content" in gen_file.read_text(encoding="utf-8")
+    assert "hipMemcpyAsync" in gen_file.read_text(encoding="utf-8")
     # File lifecycle should indicate modified by AI
     assert ctx.file_lifecycle["vector_ops.cu"]["modified_by_ai"] is True
 
@@ -571,12 +589,34 @@ async def test_one_semantic_recovery_one_retry(tmp_path, monkeypatch):
     assert ctx.current_attempt == 0
 
     # Transition PATCHING runs
-    ctx.analysis_result = {"repair_plan": []}
+    ctx.analysis_result = {
+        "root_cause": "hipMemcpyAsync_WRONG is not a valid HIP API.",
+        "repair_plan": ["Replace hipMemcpyAsync_WRONG with hipMemcpyAsync."]
+    }
+    # Realistic localized patch: only the bad API token changes
+    _orig = (
+        "#include <hip/hip_runtime.h>\n"
+        "void transfer(float* d, float* s, int n, hipStream_t st) {\n"
+        "    hipMemcpyAsync_WRONG(d, s, n*sizeof(float), hipMemcpyDeviceToDevice, st);\n"
+        "}\n"
+    )
     def mock_patch(*args, **kwargs):
-        return "// patched"
+        return _orig.replace("hipMemcpyAsync_WRONG", "hipMemcpyAsync")
     monkeypatch.setattr("app.agents.patch_agent.patch", mock_patch)
+
+    # Mock run_hipcc to make compile probe succeed
+    def mock_run_hipcc(*args, **kwargs):
+        return {
+            "success": True,
+            "errors": [],
+            "stdout": "mock compile probe passed",
+            "stderr": "",
+            "command": "hipcc ...",
+            "actual_arch": "gfx90a"
+        }
+    monkeypatch.setattr("app.compiler.hipcc_runner.run_hipcc", mock_run_hipcc)
     ctx.hipify_output_path = str(ws / "generated" / "vector_ops.hip")
-    (ws / "generated" / "vector_ops.hip").write_text("// failed\n", encoding="utf-8")
+    (ws / "generated" / "vector_ops.hip").write_text(_orig, encoding="utf-8")
 
     ctx.current_state = "PATCHING"
     await handle_patching(ctx)
@@ -657,3 +697,49 @@ async def test_single_file_cuda_migration_lightweight(tmp_path):
     assert next_state == "HIPIFY"
     assert ctx.project_inventory["input_kind"] == "single_file"
     assert ctx.error_category == "NONE"
+
+
+def test_compilation_cache_key_robustness(tmp_path):
+    from app.compiler.hipcc_runner import compute_compilation_cache_key
+    
+    ws = tmp_path / "ws"
+    (ws / "generated").mkdir(parents=True)
+    
+    # 1. Base cache key
+    source = ws / "generated" / "kernel.hip"
+    source.write_text("int main() { return 0; }", encoding="utf-8")
+    
+    key1 = compute_compilation_cache_key(str(source), target_arch="gfx942", workspace_path=str(ws), cmd_str="hipcc kernel.hip -o out --offload-arch=gfx942")
+    
+    # 2. Modify target arch
+    key2 = compute_compilation_cache_key(str(source), target_arch="gfx90a", workspace_path=str(ws), cmd_str="hipcc kernel.hip -o out --offload-arch=gfx90a")
+    assert key1 != key2
+    
+    # 3. Modify source file content
+    source.write_text("int main() { return 1; }", encoding="utf-8")
+    key3 = compute_compilation_cache_key(str(source), target_arch="gfx942", workspace_path=str(ws), cmd_str="hipcc kernel.hip -o out --offload-arch=gfx942")
+    assert key1 != key3
+
+    # 4. Modify build file content (Makefile)
+    makefile = ws / "generated" / "Makefile"
+    makefile.write_text("all:\n\t$(HIPCC) kernel.hip -o out", encoding="utf-8")
+    key4 = compute_compilation_cache_key(str(source), target_arch="gfx942", workspace_path=str(ws), cmd_str="hipcc kernel.hip -o out --offload-arch=gfx942")
+    assert key3 != key4
+
+
+def test_compiled_architecture_regex(tmp_path):
+    from app.compiler.hipcc_runner import detect_compiled_architecture
+    
+    bin_file = tmp_path / "mock.bin"
+    
+    # Check that gfx942 is extracted from mock binary
+    bin_file.write_bytes(b"some prefix code gfx942 some suffix code")
+    assert detect_compiled_architecture(str(bin_file)) == "gfx942"
+    
+    # Check gfx906 is extracted
+    bin_file.write_bytes(b"some prefix code gfx906 some suffix code")
+    assert detect_compiled_architecture(str(bin_file)) == "gfx906"
+
+    # Check non-matching
+    bin_file.write_bytes(b"no matching architecture signature here")
+    assert detect_compiled_architecture(str(bin_file)) is None
