@@ -36,6 +36,7 @@ class Settings:
 
     # Migration defaults
     DEFAULT_RETRY_BUDGET: int = int(os.getenv("DEFAULT_RETRY_BUDGET", "5"))
+    CUDA_PARSER_ARCH: str = os.getenv("CUDA_PARSER_ARCH", "sm_80")
 
     # Logging and server configurations
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

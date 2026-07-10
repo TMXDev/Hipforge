@@ -72,7 +72,7 @@ def test_localized_patch_accepted(tmp_path):
     assert result["accepted"] is True, f"Expected accepted, got: {result['reason']}"
     assert result["changed_lines"] > 0
     assert result["before_hash"] != result["after_hash"]
-    assert "---" in result["diff"] or "+++" in result["diff"]
+    assert result["diff"].startswith("--- original\n+++ patched\n@@")
     assert result["diagnosis"]  # non-empty
     assert result["arch_warning"] is None  # no arch-sensitive code
 

@@ -234,6 +234,7 @@ class MockFireworksClient(FireworksClient):
             content = {
                 "summary": "Compilation failed after CUDA-to-HIP translation and needs a targeted source patch.",
                 "root_cause": "The translated source still contains an API or semantic pattern that HIP cannot compile as written.",
+                "diagnosis": "API mismatch: CUDA-specific call or type used where a HIP equivalent is required.",
                 "affected_files": ["kernel.hip"],
                 "affected_lines": [1],
                 "confidence": 0.82,
@@ -241,7 +242,9 @@ class MockFireworksClient(FireworksClient):
                     "Replace remaining CUDA-only APIs with HIP equivalents.",
                     "Preserve the existing kernel structure and retry compilation.",
                 ],
+                "requires_human": False,
             }
+
         elif "patch agent" in system_text or "source code" in user_lower:
             content = user_text
             if "```hip" in content:

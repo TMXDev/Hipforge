@@ -54,7 +54,8 @@ def compute_compilation_cache_key(
     source_path: str,
     target_arch: str,
     workspace_path: str = None,
-    cmd_str: str = None
+    cmd_str: str = None,
+    evidence: dict = None,
 ) -> str:
     """
     Computes a cache key that includes:
@@ -104,6 +105,8 @@ def compute_compilation_cache_key(
             content = p.read_bytes()
             h = hashlib.sha256(content).hexdigest()
             components.append(f"file:{rel}:{h}")
+            if evidence is not None:
+                evidence.setdefault("input_hashes", {})[rel] = h
         except Exception:
             pass
 
@@ -310,6 +313,11 @@ class HipccRunner:
         if is_cmake:
             cmd_str = "cmake -B build ... && cmake --build build"
 
+        cache_evidence = {}
+        cache_key = compute_compilation_cache_key(
+            source_path, target_arch, workspace_path, cmd_str, cache_evidence
+        )
+
         # Check cache
         cached = get_compilation_cache(source_path, target_arch, workspace_path, cmd_str)
         if cached:
@@ -337,11 +345,17 @@ class HipccRunner:
                 "stdout": meta.get("stdout", "") + "\n[Cache Hit] Output loaded from compilation cache.",
                 "stderr": meta.get("stderr", ""),
                 "command": meta.get("command", ""),
-                "actual_arch": meta.get("actual_arch", "")
+                "actual_arch": meta.get("actual_arch", ""),
+                "cache_key": cache_key,
+                "cache_hit": True,
+                "input_hashes": cache_evidence.get("input_hashes", {}),
             }
 
         # Cache miss: compile
         result = self._run_hipcc_uncached(source_path, output_path, target_arch, workspace_path)
+        result["cache_key"] = cache_key
+        result["cache_hit"] = False
+        result["input_hashes"] = cache_evidence.get("input_hashes", {})
         
         # Write to cache
         write_compilation_cache(source_path, target_arch, result, output_path, workspace_path, cmd_str)

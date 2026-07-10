@@ -351,7 +351,7 @@ def validate_patch(
     diff_lines = list(difflib.unified_diff(
         orig_lines, patch_lines,
         fromfile="original", tofile="patched",
-        lineterm="",
+        lineterm="\n",
     ))
     diff_text = "".join(diff_lines)
 

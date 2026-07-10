@@ -14,6 +14,7 @@ import hashlib
 import logging
 import zipfile
 import difflib
+import re
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -23,6 +24,32 @@ from app.redis.keys import status_key
 from app.compiler.project_scanner import project_summary_line
 
 logger = logging.getLogger("report_service")
+
+
+def _actual_compiled_architecture(context: Any) -> str:
+    if not getattr(context, "compilation_success", False):
+        return ""
+    actual = getattr(context, "actual_compiled_architecture", "") or ""
+    if actual:
+        return actual
+    match = re.search(
+        r"--offload-arch(?:=|\s+)(gfx\w+)",
+        getattr(context, "last_compile_command", "") or "",
+    )
+    return match.group(1) if match else ""
+
+
+def _ai_repair_status(context: Any, cycles: int) -> str:
+    if cycles > 0:
+        return "succeeded" if getattr(context, "compilation_success", False) else "failed"
+    if get_skipped_ai_repair_reason(context):
+        return "skipped" if not getattr(context, "compilation_success", False) else "not_needed"
+    return "not_needed"
+
+
+def _final_workflow_state(context: Any) -> str:
+    state = getattr(context, "current_state", "COMPLETED")
+    return "COMPLETED" if state == "GENERATING_REPORT" else state
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -194,8 +221,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         for log_file in sorted(logs_dir.glob("compile_attempt_*.log")):
             try:
                 content = log_file.read_text(encoding="utf-8", errors="replace")
-                snippet = content[-400:] if len(content) > 400 else content
-                log_summaries.append(f"**{log_file.name}**:\n```\n{snippet.strip()}\n```")
+                log_summaries.append(f"**{log_file.name}**:\n```\n{content.strip()}\n```")
             except Exception:
                 pass
 
@@ -222,7 +248,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Start Time**: `{start_time}`",
         f"- **End Time**: `{now_str}`",
         f"- **Target GPU Architecture**: `{getattr(context, 'target_gpu_architecture', 'gfx90a')}`",
-        f"- **Actual Compiled Architecture**: `{getattr(context, 'actual_compiled_architecture', 'N/A')}`",
+        f"- **Actual Compiled Architecture**: `{_actual_compiled_architecture(context) or 'N/A'}`",
         f"- **Last Compile Command**: `{getattr(context, 'last_compile_command', 'N/A')}`",
         f"- **Architecture Selection Source**: `{getattr(context, 'architecture_selection_source', 'unknown')}`",
         f"- **Architecture Confidence**: `{getattr(context, 'architecture_confidence', 'LOW')}`",
@@ -375,6 +401,24 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     else:
         lines.append("- No AI Agent interactions recorded.")
 
+    patch_audit = getattr(context, "patch_validations", None) or []
+    if not patch_audit and getattr(context, "patch_validation", None):
+        patch_audit = [context.patch_validation]
+    if patch_audit:
+        lines.extend(["", "## 8a. Patch Audit"])
+        for item in patch_audit:
+            lines.extend([
+                f"- **Target File**: `{item.get('target_file', 'N/A')}`",
+                f"  - **Accepted**: `{item.get('accepted', False)}`",
+                f"  - **Reason**: {item.get('reason', '')}",
+                f"  - **Changed Lines**: `{item.get('changed_lines', 0)}`",
+                f"  - **Pre-patch Hash**: `{item.get('before_hash', '')}`",
+                f"  - **Post-patch Hash**: `{item.get('after_hash', '')}`",
+                f"  - **Architecture-sensitive Warning**: {item.get('arch_warning') or 'None'}",
+                "  - **Unified Diff**:",
+                f"```diff\n{item.get('diff', '').rstrip()}\n```",
+            ])
+
     # 8b. Learning / Previous Knowledge Used
     lesson_matched = getattr(context, "lesson_matched", None)
     if lesson_matched:
@@ -428,7 +472,7 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     # Launcher memory contract and hardening details
     expects_device_ptr = getattr(context, "launcher_expects_device_pointers", "N/A")
     rt_perf = "Yes" if rt_status == "PASSED" else "No"
-    conf_type = "runtime-validated" if (rt_status == "PASSED" or val_confidence in ("HIGH", "PROFILED")) else "compile-only"
+    conf_type = "runtime-validated" if rt_status == "PASSED" else "compile-only"
     err_checks = getattr(context, "kernel_launch_error_checks", "none")
     sync_status = getattr(context, "synchronization_status", "none")
 
@@ -474,17 +518,8 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
 
     from app.config.settings import settings
     ai_mode = "mock" if settings.USE_MOCK_AI else "real"
-    ai_repair_status = "not_needed"
-    if getattr(context, "compilation_success", False) and getattr(context, "current_attempt", 0) <= 1:
-        ai_repair_status = "not_needed"
-    elif get_skipped_ai_repair_reason(context):
-        ai_repair_status = "skipped"
-    elif getattr(context, "compilation_success", False):
-        ai_repair_status = "repaired"
-    else:
-        ai_repair_status = "failed"
-        
-    final_workflow_state = getattr(context, "current_state", "COMPLETED")
+    ai_repair_status = _ai_repair_status(context, ai_repair_cycles)
+    final_workflow_state = _final_workflow_state(context)
     compiler_mode = getattr(context, "compiler_mode", "real")
     compile_status = getattr(context, "compile_status", "NOT_RUN")
     generated_artifact_path = f"exports/{migration_id}.zip"
@@ -597,13 +632,28 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         for idx, log_file in enumerate(sorted(logs_dir.glob("compile_attempt_*.log"))):
             try:
                 content = log_file.read_text(encoding="utf-8", errors="replace")
-                compilation_history.append({
+                record = {
                     "attempt": idx + 1,
                     "log_file": log_file.name,
-                    "stdout_stderr_summary": content[-400:] if len(content) > 400 else content
+                    "stdout_stderr_summary": content,
+                }
+                command = re.search(r"^Command: (.*)$", content, re.MULTILINE)
+                cache_key = re.search(r"^Cache key: (.*)$", content, re.MULTILINE)
+                cache_state = re.search(r"^Cache: (hit|miss)$", content, re.MULTILINE)
+                record.update({
+                    "command": command.group(1) if command else "",
+                    "cache_key": cache_key.group(1) if cache_key else "",
+                    "cache_hit": cache_state.group(1) == "hit" if cache_state else None,
                 })
+                compilation_history.append(record)
             except Exception:
                 pass
+
+    recorded_history = getattr(context, "compilation_history", []) or []
+    by_attempt = {record["attempt"]: record for record in compilation_history}
+    for recorded in recorded_history:
+        by_attempt.setdefault(recorded["attempt"], {}).update(recorded)
+    compilation_history = [by_attempt[key] for key in sorted(by_attempt)]
 
     # 5. AI Agent Activity
     analysis_summaries = []
@@ -677,7 +727,6 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "migration_journal_excerpt": journal,
         "generated_artifacts": [
             "generated/",
-            "generated/Makefile.hipforge (auto-generated build plan)",
             "patches/",
             "logs/",
             "reports/migration_report.md",
@@ -687,21 +736,30 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         ],
         "performance_profiling": {}
     }
+    if (workspace_path / "generated" / "Makefile.hipforge").exists():
+        report_data["generated_artifacts"].insert(
+            1, "generated/Makefile.hipforge (auto-generated build plan)"
+        )
+
+    patch_audit = getattr(context, "patch_validations", None) or []
+    if not patch_audit and getattr(context, "patch_validation", None):
+        patch_audit = [context.patch_validation]
+    report_data["patch_audit"] = [{
+        "target_file": item.get("target_file"),
+        "accepted": item.get("accepted", False),
+        "reason": item.get("reason", ""),
+        "changed_lines": item.get("changed_lines", 0),
+        "diff": item.get("diff", ""),
+        "before_hash": item.get("before_hash", ""),
+        "after_hash": item.get("after_hash", ""),
+        "arch_warning": item.get("arch_warning"),
+    } for item in patch_audit]
 
     # AI Mode & repair status
     from app.config.settings import settings
     ai_mode = "mock" if settings.USE_MOCK_AI else "real"
-    ai_repair_status = "not_needed"
-    if getattr(context, "compilation_success", False) and getattr(context, "current_attempt", 0) <= 1:
-        ai_repair_status = "not_needed"
-    elif get_skipped_ai_repair_reason(context):
-        ai_repair_status = "skipped"
-    elif getattr(context, "compilation_success", False):
-        ai_repair_status = "repaired"
-    else:
-        ai_repair_status = "failed"
-        
-    final_workflow_state = getattr(context, "current_state", "COMPLETED")
+    ai_repair_status = _ai_repair_status(context, len(analysis_summaries))
+    final_workflow_state = _final_workflow_state(context)
     compiler_mode = getattr(context, "compiler_mode", "real")
     compile_status = getattr(context, "compile_status", "NOT_RUN")
     generated_artifact_path = f"exports/{migration_id}.zip"
@@ -713,7 +771,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     report_data["build_system"] = project_scan_json.get("build_system", "none")
     report_data["compiler_mode"] = compiler_mode
     report_data["compile_command"] = getattr(context, "last_compile_command", "")
-    report_data["actual_compiled_architecture"] = getattr(context, "actual_compiled_architecture", "N/A")
+    report_data["actual_compiled_architecture"] = _actual_compiled_architecture(context)
     report_data["compile_status"] = compile_status
     report_data["translation_status"] = "PASSED" if bool(getattr(context, "hipify_output_path", None)) else "FAILED"
     report_data["static_validation_status"] = getattr(context, "static_validation_status", "NOT_RUN")
@@ -756,7 +814,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "failure_category": failure_category,
         "recommended_next_action": next_action,
         "target_architecture": getattr(context, "target_gpu_architecture", "gfx90a"),
-        "actual_compiled_architecture": getattr(context, "actual_compiled_architecture", "N/A"),
+        "actual_compiled_architecture": _actual_compiled_architecture(context),
         "last_compile_command": getattr(context, "last_compile_command", "N/A"),
         "repair_budget": getattr(context, "retry_budget", 0),
         "compile_attempts": len(compilation_history),
@@ -776,7 +834,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         "profiling_status": getattr(context, "profiling_status", "NOT_CONFIGURED"),
         "launcher_expects_device_pointers": getattr(context, "launcher_expects_device_pointers", "N/A"),
         "runtime_execution_performed": "Yes" if getattr(context, "runtime_validation_status", "NOT_CONFIGURED") == "PASSED" else "No",
-        "validation_confidence_type": "runtime-validated" if (getattr(context, "runtime_validation_status", "NOT_CONFIGURED") == "PASSED" or getattr(context, "validation_confidence", "LOW") in ("HIGH", "PROFILED")) else "compile-only",
+        "validation_confidence_type": "runtime-validated" if getattr(context, "runtime_validation_status", "NOT_CONFIGURED") == "PASSED" else "compile-only",
         "kernel_launch_error_checks": getattr(context, "kernel_launch_error_checks", "none"),
         "synchronization_status": getattr(context, "synchronization_status", "none"),
     }
@@ -803,7 +861,7 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
         logger.error("[ReportService] Failed to write JSON report: %s", exc)
 
 
-async def generate_git_patch(migration_id: str) -> None:
+async def generate_git_patch(migration_id: str, context: Any = None) -> None:
     """
     Computes a unified diff between the original source files in input/
     and their latest translated or patched versions in the workspace,
@@ -817,7 +875,16 @@ async def generate_git_patch(migration_id: str) -> None:
     input_dir = workspace_path / "input"
     diff_lines = []
 
-    if input_dir.exists():
+    patch_audit = (getattr(context, "patch_validations", None) or []) if context else []
+    if not patch_audit and context is not None and getattr(context, "patch_validation", None):
+        patch_audit = [context.patch_validation]
+    for item in patch_audit:
+        if item.get("accepted") and item.get("diff"):
+            diff_lines.append(item["diff"])
+            if not item["diff"].endswith("\n"):
+                diff_lines.append("\n")
+
+    if not diff_lines and input_dir.exists():
         for orig_file in input_dir.iterdir():
             if not orig_file.is_file():
                 continue
@@ -941,7 +1008,7 @@ async def write_history_summary(migration_id: str, context: Any, *, failed: bool
         logger.error("[HistoryService] Failed to write history summary: %s", exc)
 
 
-async def build_zip(migration_id: str) -> None:
+async def build_zip(migration_id: str, context: Any = None) -> None:
     """
     Packages generated/, patches/, logs/, reports/ (with report files and git patch),
     and a root README.txt into exports/HIPForge_Migration.zip.
@@ -953,11 +1020,11 @@ async def build_zip(migration_id: str) -> None:
 
     # Create root README.txt inside the workspace temporarily
     readme_file = workspace_path / "README.txt"
-    status = "UNKNOWN"
+    status = _final_workflow_state(context) if context is not None else "UNKNOWN"
     try:
         # Check status key in Redis to include status in README
         redis_status = await redis_client.get(status_key(migration_id))
-        if redis_status:
+        if redis_status and context is None:
             status = redis_status
     except Exception:
         pass

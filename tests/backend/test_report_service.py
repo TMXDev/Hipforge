@@ -65,7 +65,13 @@ def ctx(workspace):
     c.target_gpu_architecture = "gfx90a"
     c.retry_budget = 3
     c.current_attempt = 1
+    c.current_state = "GENERATING_REPORT"
     c.hipify_output_path = str(ws_path / "generated" / "simple_kernel.hip")
+    c.compile_status = "PASSED"
+    c.last_compile_command = "hipcc --offload-arch=gfx942 simple_kernel.hip -o simple_kernel"
+    c.actual_compiled_architecture = ""
+    c.runtime_validation_status = "NOT_RUN"
+    c.validation_confidence = "HIGH"
     c.sca_result = {
         "issues": [
             {"description": "Texture Reference API is deprecated in HIP", "line": 12}
@@ -79,6 +85,22 @@ def ctx(workspace):
             "root_cause": "threadIdx reference needs to be mapped to hipThreadIdx_x",
             "repair_plan": ["Run patch agent on simple_kernel.hip"]
         }
+    ]
+    c.patch_validation = {
+        "target_file": "simple_kernel.hip",
+        "accepted": True,
+        "reason": "localized API repair",
+        "changed_lines": 1,
+        "diff": "--- a/simple_kernel.hip\n+++ b/simple_kernel.hip\n@@ -1 +1 @@\n-old_call();\n+new_call();\n",
+        "before_hash": "before123",
+        "after_hash": "after456",
+        "arch_warning": "Architecture-sensitive repair requires runtime validation.",
+    }
+    c.compilation_history = [
+        {"attempt": 1, "cache_key": "pre-patch-key", "cache_hit": False,
+         "input_hashes": {"generated/simple_kernel.hip": "pre-source-hash"}},
+        {"attempt": 2, "cache_key": "post-patch-key", "cache_hit": False,
+         "input_hashes": {"generated/simple_kernel.hip": "post-source-hash"}},
     ]
     return c
 
@@ -108,6 +130,12 @@ async def test_generate_markdown_report(workspace, ctx):
 
 @pytest.mark.anyio
 async def test_generate_json_report(workspace, ctx):
+    _, ws_path = workspace
+    (ws_path / "logs" / "compile_attempt_002.log").write_text(
+        "Command: hipcc --offload-arch=gfx942 simple_kernel.hip -o simple_kernel\n"
+        "Cache key: post-patch-key\nCache: miss\n",
+        encoding="utf-8",
+    )
     migration_id, ws_path = workspace
     await generate_json_report(migration_id, ctx)
     
@@ -135,6 +163,28 @@ async def test_generate_json_report(workspace, ctx):
     assert data["compilation_history"][0]["log_file"] == "compile_attempt_001.log"
     assert len(data["ai_agent_activity"]["analysis_summaries"]) == 1
     assert data["generated_artifacts"] is not None
+    assert data["actual_compiled_architecture"] == "gfx942"
+    assert data["ai_repair_status"] == "succeeded"
+    assert data["final_workflow_state"] == "COMPLETED"
+    assert "generated/Makefile.hipforge (auto-generated build plan)" not in data["generated_artifacts"]
+    assert data["patch_audit"] == [{
+        "target_file": "simple_kernel.hip",
+        "accepted": True,
+        "reason": "localized API repair",
+        "changed_lines": 1,
+        "diff": "--- a/simple_kernel.hip\n+++ b/simple_kernel.hip\n@@ -1 +1 @@\n-old_call();\n+new_call();\n",
+        "before_hash": "before123",
+        "after_hash": "after456",
+        "arch_warning": "Architecture-sensitive repair requires runtime validation.",
+    }]
+    assert data["validation_confidence"]["compile_validation_status"] == "PASSED"
+    assert data["validation_confidence"]["runtime_validation_status"] == "NOT_RUN"
+    assert data["validation_confidence"]["validation_confidence_type"] == "compile-only"
+    assert [item["cache_key"] for item in data["compilation_history"]] == [
+        "pre-patch-key", "post-patch-key"
+    ]
+    assert data["compilation_history"][1]["command"].endswith("-o simple_kernel")
+    assert data["compilation_history"][0]["input_hashes"] != data["compilation_history"][1]["input_hashes"]
 
 
 @pytest.mark.anyio
@@ -159,10 +209,10 @@ async def test_build_zip(workspace, ctx):
     # Generate reports first so they are present in reports/ folder
     await generate_markdown_report(migration_id, ctx)
     await generate_json_report(migration_id, ctx)
-    await generate_git_patch(migration_id)
+    await generate_git_patch(migration_id, ctx)
     
     # Build Zip package
-    await build_zip(migration_id)
+    await build_zip(migration_id, ctx)
     
     zip_file = ws_path / "exports" / "HIPForge_Migration.zip"
     assert zip_file.exists()
@@ -178,3 +228,14 @@ async def test_build_zip(workspace, ctx):
         assert "reports/migration_report.md" in names
         assert "reports/migration_report.json" in names
         assert "reports/git_patch.diff" in names
+        assert "Status: COMPLETED" in z.read("README.txt").decode()
+        assert "+new_call();" in z.read("reports/git_patch.diff").decode()
+
+
+@pytest.mark.anyio
+async def test_failed_compile_does_not_claim_command_architecture(workspace, ctx):
+    migration_id, ws_path = workspace
+    ctx.compilation_success = False
+    await generate_json_report(migration_id, ctx)
+    data = json.loads((ws_path / "reports" / "migration_report.json").read_text())
+    assert data["actual_compiled_architecture"] == ""

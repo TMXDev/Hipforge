@@ -86,13 +86,19 @@ _EXPECTED_SCHEMA = """\
 {
   "summary": "<one-sentence summary of what went wrong>",
   "root_cause": "<detailed explanation of the underlying cause>",
+  "diagnosis": "<concise technical diagnosis: what exactly is broken and why>",
   "affected_files": ["<filename>"],
   "affected_lines": [<line_number>, ...],
   "confidence": <float 0.0-1.0>,
   "repair_plan": [
     "<step 1 — most likely fix>",
     "<step 2 — alternative if step 1 fails>"
-  ]
+  ],
+  "proposed_patches": [
+    {"file": "<filename>", "reason": "<why this change fixes the error>", "content": "<the exact replacement code snippet>"}
+  ],
+  "requires_human": <true|false>,
+  "blocker": "<optional: what prevents automated repair, if requires_human is true>"
 }\
 """
 
@@ -109,6 +115,7 @@ def _build_messages(
     attempt: int,
     migration_journal: Optional[List[Dict[str, Any]]],
     previous_research: Optional[str],
+    repair_context: Optional[Dict[str, Any]] = None,
     context: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     """
@@ -164,12 +171,37 @@ def _build_messages(
         if context is not None:
             context.ai_context_truncated = True
 
+    # Format repair context for prompt section 2
+    repair_ctx_text = ""
+    if repair_context:
+        lines = []
+        if repair_context.get("failed_stage"):
+            lines.append(f"Failed Stage: {repair_context['failed_stage']}")
+        if repair_context.get("compile_command"):
+            lines.append(f"Failing Command: {repair_context['compile_command']}")
+        if repair_context.get("target_arch"):
+            lines.append(f"Target Architecture: {repair_context['target_arch']}")
+        if repair_context.get("rocm_version"):
+            lines.append(f"ROCm Version: {repair_context['rocm_version']}")
+        if repair_context.get("compiler_version"):
+            lines.append(f"Compiler Version: {repair_context['compiler_version']}")
+        if repair_context.get("remaining_budget") is not None:
+            lines.append(f"Remaining Repair Budget: {repair_context['remaining_budget']}")
+        if repair_context.get("source_file"):
+            lines.append(f"Source File: {repair_context['source_file']}")
+        if repair_context.get("raw_stderr"):
+            # ponytail: cap stderr in context at 2000 chars — the structured errors already carry the detail
+            stderr_snippet = repair_context["raw_stderr"][:2000]
+            lines.append(f"Raw stderr (capped):\n{stderr_snippet}")
+        repair_ctx_text = "\n".join(lines)
+
     # Assemble the user message as the 6-section template
     user_content = f"""\
 ## 2. Current Task
 Compilation attempt #{attempt + 1} has failed.
 Identify the root cause and produce a ranked repair plan.
 Do not repeat strategies already in the Migration Journal.
+{(chr(10) + '### Repair Context' + chr(10) + repair_ctx_text) if repair_ctx_text else ''}
 
 ## 3. Source Code
 ```hip
@@ -245,15 +277,19 @@ def _parse_response(raw_content: str) -> Dict[str, Any]:
             f"Raw content (first 500 chars): {raw_content[:500]}"
         ) from e
 
-    # Validate required fields
+    # Validate required fields — diagnosis and confidence are now required
     required = {"summary", "root_cause", "affected_files", "affected_lines",
-                "confidence", "repair_plan"}
+                "confidence", "repair_plan", "diagnosis"}
     missing = required - set(parsed.keys())
     if missing:
         raise ValueError(
             f"Analysis Agent response is missing required fields: {missing}\n"
             f"Got fields: {set(parsed.keys())}"
         )
+
+    # Validate requires_human field type if present
+    if "requires_human" in parsed and not isinstance(parsed["requires_human"], bool):
+        parsed["requires_human"] = bool(parsed["requires_human"])
 
     return parsed
 
@@ -264,6 +300,7 @@ def analyze(
     attempt: int = 0,
     migration_journal: Optional[List[Dict[str, Any]]] = None,
     previous_research: Optional[str] = None,
+    repair_context: Optional[Dict[str, Any]] = None,
     max_tokens: int = 2048,
     context: Optional[Any] = None,
 ) -> Dict[str, Any]:
@@ -284,12 +321,16 @@ def analyze(
     Returns:
         Dict with the Analysis Agent output schema:
         {
-            "summary":        str   — one-sentence description of what went wrong,
-            "root_cause":     str   — detailed root cause explanation,
-            "affected_files": list  — filenames involved in the error,
-            "affected_lines": list  — line numbers where errors occur,
-            "confidence":     float — agent's confidence in its diagnosis (0–1),
-            "repair_plan":    list  — ordered list of repair steps to try,
+            "summary":          str   — one-sentence description of what went wrong,
+            "root_cause":       str   — detailed root cause explanation,
+            "diagnosis":        str   — concise technical diagnosis,
+            "affected_files":   list  — filenames involved in the error,
+            "affected_lines":   list  — line numbers where errors occur,
+            "confidence":       float — agent's confidence in its diagnosis (0–1),
+            "repair_plan":      list  — ordered list of repair steps to try,
+            "proposed_patches": list  — optional structured patch suggestions,
+            "requires_human":   bool  — True when automated repair is not viable,
+            "blocker":          str   — optional, set when requires_human is True,
         }
 
     Raises:
@@ -303,6 +344,7 @@ def analyze(
         attempt=attempt,
         migration_journal=migration_journal,
         previous_research=previous_research,
+        repair_context=repair_context,
         context=context,
     )
 

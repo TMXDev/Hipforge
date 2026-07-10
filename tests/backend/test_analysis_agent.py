@@ -154,10 +154,12 @@ class TestParseResponse:
         return json.dumps({
             "summary": "Compilation failed due to missing API.",
             "root_cause": "hipMemcpyAsync stream parameter type mismatch.",
+            "diagnosis": "API mismatch: hipMemcpyAsync called with wrong argument types.",
             "affected_files": ["kernel.hip"],
             "affected_lines": [42, 67],
             "confidence": 0.92,
             "repair_plan": ["Replace with hipMemcpyWithStream.", "Upgrade ROCm."],
+            "requires_human": False,
         })
 
     def test_parses_raw_json(self):
@@ -194,9 +196,11 @@ class TestParseResponse:
 
     def test_all_required_fields_present(self):
         result = _parse_response(self._valid_json())
-        for field in ("summary", "root_cause", "affected_files", "affected_lines",
+        for field in ("summary", "root_cause", "diagnosis", "affected_files", "affected_lines",
                       "confidence", "repair_plan"):
             assert field in result, f"Missing field: {field}"
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -281,10 +285,12 @@ class TestAnalyze:
                             "content": json.dumps({
                                 "summary": "test",
                                 "root_cause": "test cause",
+                                "diagnosis": "test diagnosis",
                                 "affected_files": ["f.hip"],
                                 "affected_lines": [1],
                                 "confidence": 0.9,
                                 "repair_plan": ["fix it"],
+                                "requires_human": False,
                             }),
                         },
                         "finish_reason": "stop",
@@ -313,10 +319,12 @@ class TestAnalyze:
                             "content": json.dumps({
                                 "summary": "s",
                                 "root_cause": "r",
+                                "diagnosis": "d",
                                 "affected_files": [],
                                 "affected_lines": [],
                                 "confidence": 0.8,
                                 "repair_plan": ["step"],
+                                "requires_human": False,
                             }),
                         },
                         "finish_reason": "stop",
