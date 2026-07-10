@@ -225,10 +225,13 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
     });
   }, [stages, events]);
 
+  const isCompletedDone = stages.get("COMPLETED")?.status === "completed" || stages.get("COMPLETED")?.status === "failed";
+  const isWorkflowTerminal = isFailed || isCompletedDone;
+
   return (
     <div className="w-full">
       {/* Connection status — luxury rectangular badge */}
-      <ConnectionBadge state={connectionState} />
+      {!isWorkflowTerminal && <ConnectionBadge state={connectionState} />}
 
       {/* Terminal state banner — architectural left border */}
       {isFailed && (
@@ -256,9 +259,6 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
             message: "",
             timestamp: null,
           };
-          const isCompletedDone = stages.get("COMPLETED")?.status === "completed" || stages.get("COMPLETED")?.status === "failed";
-          const isWorkflowTerminal = isFailed || isCompletedDone;
-
           let displayStage: StageState = stage;
           if (meta.state === "COMPLETED" && isFailed) {
             displayStage = { ...stage, status: stage.status === "pending" ? "pending" : "failed", state: "FAILED" as JobState };
