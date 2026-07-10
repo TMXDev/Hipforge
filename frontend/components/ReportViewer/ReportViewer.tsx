@@ -223,11 +223,29 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
             </ReportRow>
           )}
 
+          {/* Translation Status */}
+          {status?.translation_status && (
+            <ReportRow label="Translation Status">
+              <span className={`font-mono text-xs uppercase font-semibold tracking-wide ${status.translation_status === "PASSED" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {status.translation_status}
+              </span>
+            </ReportRow>
+          )}
+
           {/* Compile Status */}
           {status?.compile_status && (
             <ReportRow label="Compiler Validation">
               <span className={`font-mono text-xs uppercase font-semibold tracking-wide ${status.compile_status === "PASSED" ? "text-emerald-600 dark:text-emerald-400" : status.compile_status === "FAILED" || status.compile_status === "FAILED_SETUP" ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                 {status.compile_status}
+              </span>
+            </ReportRow>
+          )}
+
+          {/* Static Validation Status */}
+          {status?.static_validation_status && (
+            <ReportRow label="Static Validation">
+              <span className={`font-mono text-xs uppercase font-semibold tracking-wide ${status.static_validation_status === "PASSED" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {status.static_validation_status}
               </span>
             </ReportRow>
           )}
@@ -249,6 +267,11 @@ export default function ReportViewer({ migrationId, isActive = true }: ReportVie
               </span>
             </ReportRow>
           )}
+
+          {/* AMD Hardware Note */}
+          <div className="text-[10px] leading-relaxed pt-2 text-center" style={{ color: "var(--text-muted)", opacity: 0.8 }}>
+            Note: Local AMD hardware is not required for translation and cross-compilation.
+          </div>
 
           {/* Separator */}
           <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} />

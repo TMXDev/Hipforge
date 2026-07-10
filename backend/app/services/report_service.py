@@ -130,6 +130,8 @@ async def _recalculate_validation_confidence(context: Any) -> None:
                 "validation_confidence_reason": reason,
                 "compiler_mode": compiler_mode,
                 "compile_status": compile_status,
+                "translation_status": "PASSED" if bool(getattr(context, "hipify_output_path", None)) else "FAILED",
+                "static_validation_status": getattr(context, "static_validation_status", "NOT_RUN"),
                 "runtime_validation_status": getattr(context, "runtime_validation_status", "NOT_RUN"),
                 "last_compile_command": getattr(context, "last_compile_command", ""),
                 "failure_reason": getattr(context, "failure_reason", "") or "",
@@ -206,6 +208,11 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
     skipped_reason = get_skipped_ai_repair_reason(context) or ""
 
     # Build markdown report content
+    translation_status = "PASSED" if bool(getattr(context, "hipify_output_path", None)) else "FAILED"
+    compile_status = getattr(context, "compile_status", "NOT_RUN")
+    static_validation_status = getattr(context, "static_validation_status", "NOT_RUN")
+    runtime_validation_status = getattr(context, "runtime_validation_status", "NOT_RUN")
+
     lines = [
         f"# HIPForge Migration Report",
         f"",
@@ -219,6 +226,13 @@ async def generate_markdown_report(migration_id: str, context: Any) -> None:
         f"- **Architecture Confidence**: `{getattr(context, 'architecture_confidence', 'LOW')}`",
         f"- **Retry Budget**: `{getattr(context, 'retry_budget', 0)}`",
         f"- **Actual Retries**: `{actual_retries}`",
+        f"- **Translation Status**: `{translation_status}`",
+        f"- **Compilation Status**: `{compile_status}`",
+        f"- **Static Validation Status**: `{static_validation_status}`",
+        f"- **Runtime Validation Status**: `{runtime_validation_status}`",
+        f"",
+        f"> [!NOTE]",
+        f"> Local AMD hardware is not required for translation and cross-compilation.",
         f"",
 
         f"## 2. Environment Summary",
@@ -698,6 +712,10 @@ async def generate_json_report(migration_id: str, context: Any) -> None:
     report_data["compiler_mode"] = compiler_mode
     report_data["compile_command"] = getattr(context, "last_compile_command", "")
     report_data["compile_status"] = compile_status
+    report_data["translation_status"] = "PASSED" if bool(getattr(context, "hipify_output_path", None)) else "FAILED"
+    report_data["static_validation_status"] = getattr(context, "static_validation_status", "NOT_RUN")
+    report_data["local_amd_hardware_required"] = False
+    report_data["note"] = "Local AMD hardware is not required for translation and cross-compilation."
     report_data["validation_confidence_level"] = getattr(context, "validation_confidence", "LOW")
     report_data["runtime_validation_status_val"] = getattr(context, "runtime_validation_status", "NOT_RUN")
     report_data["ai_mode"] = ai_mode

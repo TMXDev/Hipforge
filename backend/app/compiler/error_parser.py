@@ -16,7 +16,7 @@ def parse_compiler_errors(stderr: str) -> List[CompilerError]:
     errors = []
     if not stderr:
         return errors
-        
+
     for line in stderr.splitlines():
         line = line.strip()
         match = DIAGNOSTIC_PATTERN.match(line)
@@ -31,7 +31,7 @@ def parse_compiler_errors(stderr: str) -> List[CompilerError]:
                 message=gd["message"],
                 code=code
             ))
-            
+
     return errors
 
 
@@ -44,9 +44,9 @@ def classify_compiler_error(stderr: str) -> str:
     """
     if not stderr:
         return "USER_CODE_ERROR"
-        
+
     stderr_lower = stderr.lower()
-    
+
     # NETWORK_ERROR
     if (
         "connection timed out" in stderr_lower
@@ -90,7 +90,7 @@ def classify_compiler_error(stderr: str) -> str:
         or "read-only file system" in stderr_lower
     ):
         return "ENVIRONMENT_ERROR"
-        
+
     # TOOLCHAIN_ERROR
     if (
         "hipcc: command not found" in stderr_lower
@@ -156,14 +156,14 @@ def classify_compiler_error(stderr: str) -> str:
         or "state execution failed" in stderr_lower
     ):
         return "MIGRATION_ERROR"
-        
+
     if "compilation failed" in stderr_lower and "error:" not in stderr_lower:
         return "COMPILATION_ERROR"
 
     # NEW: unsupported HIP gpu architecture - environment/toolchain error, not user code
     if re.search(r'unsupported hip gpu architecture(?:\s*:|:)\s*(\S+)', stderr_lower) or re.search(r'gfx\d{2,4}[a-z]?\b', stderr_lower):
         return "UNSUPPORTED_FEATURE"
-        
+
     # NEW: unresolved symbol / missing source reference — linker error, treat as DEPENDENCY_ERROR
     if "undefined symbol" in stderr_lower or "undefined reference" in stderr_lower:
         return "DEPENDENCY_ERROR"
@@ -232,3 +232,38 @@ def extract_main_error(stderr: str) -> str:
 
     # Fallback to the first non-empty line
     return lines[0][:500] if lines else stderr[:500]
+
+
+def is_recoverable_hipify_error(stderr: str) -> bool:
+    """
+    Determines whether the given hipify-clang stderr string contains a recoverable
+    configuration error, such as a missing local header, missing CUDA target architecture,
+    missing CUDA Toolkit path, or incorrect project-relative include path.
+    """
+    if not stderr:
+        return False
+
+    stderr_lower = stderr.lower()
+
+    # 1. Missing local headers or incorrect paths
+    if "file not found" in stderr_lower or "no such file" in stderr_lower:
+        if any(ext in stderr_lower for ext in (".h", ".hpp", ".cuh", ".hip", ".cu")):
+            return True
+
+    # 2. Missing CUDA parser architecture
+    if (
+        "must pass in an explicit nvptx64 gpu architecture to 'ptxas'" in stderr_lower
+        or "unknown target triple" in stderr_lower
+        or "no target architecture" in stderr_lower
+    ):
+        return True
+
+    # 3. Missing CUDA Toolkit path
+    if (
+        "cuda toolkit" in stderr_lower
+        or "cannot find libdevice" in stderr_lower
+        or "libdevice not found" in stderr_lower
+    ):
+        return True
+
+    return False

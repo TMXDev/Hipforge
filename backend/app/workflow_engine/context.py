@@ -114,6 +114,8 @@ class WorkflowContext:
         # ── Compiler validation info ─────────────────────────────────────
         # NOT_RUN | PASSED | FAILED | FAILED_SETUP
         self.compile_status: str = "NOT_RUN"
+        # NOT_RUN | PASSED | FAILED
+        self.static_validation_status: str = "NOT_RUN"
         # real | test-only | unavailable
         self.compiler_mode: str = "real"
 

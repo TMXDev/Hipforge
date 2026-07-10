@@ -36,6 +36,8 @@ class MigrationStatusResponse(BaseModel):
     validation_confidence_reason: str | None = None
     compile_status: str | None = None
     runtime_validation_status: str | None = None
+    translation_status: str | None = None
+    static_validation_status: str | None = None
     compiler_mode: str | None = None
     compile_command: str | None = None
     main_error: str | None = None

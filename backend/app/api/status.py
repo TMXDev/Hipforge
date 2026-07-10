@@ -63,6 +63,8 @@ async def get_migration_status_v1(migration_id: str):
     validation_confidence_reason = metadata.get("validation_confidence_reason") or ""
     compile_status = metadata.get("compile_status") or "NOT_RUN"
     runtime_validation_status = metadata.get("runtime_validation_status") or "NOT_RUN"
+    translation_status = metadata.get("translation_status") or "NOT_RUN"
+    static_validation_status = metadata.get("static_validation_status") or "NOT_RUN"
     compiler_mode = metadata.get("compiler_mode") or "real"
     compile_command = metadata.get("last_compile_command") or ""
     main_error = metadata.get("main_error") or metadata.get("last_compile_stderr") or metadata.get("failure_reason") or ""
@@ -84,6 +86,8 @@ async def get_migration_status_v1(migration_id: str):
         validation_confidence_reason=validation_confidence_reason,
         compile_status=compile_status,
         runtime_validation_status=runtime_validation_status,
+        translation_status=translation_status,
+        static_validation_status=static_validation_status,
         compiler_mode=compiler_mode,
         compile_command=compile_command,
         main_error=main_error

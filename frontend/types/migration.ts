@@ -27,6 +27,8 @@ export interface MigrationStatus {
   compile_status?: string;
   validation_confidence?: string;
   runtime_validation_status?: string;
+  translation_status?: string;
+  static_validation_status?: string;
   compile_command?: string;
   main_error?: string;
   error_category?: string;

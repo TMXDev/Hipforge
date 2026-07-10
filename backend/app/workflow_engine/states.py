@@ -44,20 +44,62 @@ def write_cached_patch(unpatched_content: str, patched_content: str):
         pass
 
 
+def is_amd_gpu_available() -> bool:
+    """Detects whether AMD GPU hardware is available locally."""
+    import os
+    import shutil
+    import subprocess
+
+    if os.path.exists("/dev/kfd"):
+        return True
+
+    for cmd in ("rocminfo", "rocm-smi"):
+        if shutil.which(cmd):
+            try:
+                res = subprocess.run([cmd], capture_output=True, timeout=5)
+                if res.returncode == 0:
+                    return True
+            except Exception:
+                pass
+
+    if os.name == "nt":
+        try:
+            res = subprocess.run(
+                ["wmic", "path", "win32_VideoController", "get", "name"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    line_l = line.lower()
+                    if "amd" in line_l or "radeon" in line_l or "rdna" in line_l:
+                        return True
+        except Exception:
+            pass
+
+    return False
+
+
 async def _run_runtime_validation(context: WorkflowContext) -> None:
     """
     v0 runtime validation hook.
 
     - Disabled by default (RUNTIME_VALIDATION_ENABLED=false).
-    - When disabled: marks context.runtime_validation_status = NOT_CONFIGURED.
+    - When disabled: marks context.runtime_validation_status = NOT_RUN.
     - When enabled but compilation failed: marks SKIPPED.
-    - When enabled and compile succeeded: placeholder — future task will run binary.
-    - NEVER executes user binaries in v0. NEVER fakes success.
+    - When enabled and compile succeeded: runs binary if AMD GPU is available, else marks SKIPPED.
     """
     from app.config.settings import settings
+    import subprocess
+    import shutil
 
     enabled = settings.RUNTIME_VALIDATION_ENABLED
     context.runtime_validation_enabled = enabled
+
+    # Determine GPU availability
+    gpu_available = is_amd_gpu_available()
+    context.gpu_hardware_available = gpu_available
 
     if not enabled:
         context.runtime_validation_status = "NOT_RUN"
@@ -67,19 +109,75 @@ async def _run_runtime_validation(context: WorkflowContext) -> None:
         )
         return
 
-    if not context.compilation_success:
-        context.runtime_validation_status = "NOT_RUN"
+    if not getattr(context, "compilation_success", False):
+        context.runtime_validation_status = "SKIPPED"
         context.runtime_validation_reason = "Compilation did not succeed; runtime validation was not run."
         return
 
-    # ponytail: v0 placeholder — do not execute binary, do not fake PASSED.
-    # Upgrade path: invoke binary under rocm-smi / rocsmi guard, capture stdout, compare.
-    context.runtime_validation_status = "NOT_RUN"
-    context.runtime_validation_reason = (
-        "Runtime validation is enabled but not yet implemented for this migration path. "
-        "No binary was executed. Set up a gpu_real test suite for validated execution."
-    )
-    logger.info("[RUNTIME_VALIDATION] Enabled but not implemented for v0 — marked NOT_RUN.")
+    if not gpu_available:
+        context.runtime_validation_status = "SKIPPED"
+        context.runtime_validation_reason = "Runtime validation skipped because no AMD GPU is available."
+        logger.info("[RUNTIME_VALIDATION] Skipped because no AMD GPU is available.")
+        return
+
+    # AMD hardware is available — run the binary!
+    workspace = Path(context.workspace_path)
+    generated_dir = workspace / "generated"
+    binaries = sorted(generated_dir.glob("output_attempt_*"))
+    if not binaries:
+        context.runtime_validation_status = "FAILED"
+        context.runtime_validation_reason = "Runtime validation failed: compiled binary not found on disk."
+        return
+
+    latest_binary = binaries[-1]
+    logger.info("[RUNTIME_VALIDATION] AMD GPU detected. Running binary: %s", latest_binary)
+
+    # Determine if running on host or inside container sandbox
+    if shutil.which("hipcc"):
+        try:
+            res = subprocess.run([str(latest_binary)], capture_output=True, text=True, timeout=15)
+            if res.returncode == 0:
+                context.runtime_validation_status = "PASSED"
+                context.runtime_validation_reason = f"Runtime validation passed: binary executed successfully on host AMD GPU. Output:\n{res.stdout}"
+            else:
+                context.runtime_validation_status = "FAILED"
+                context.runtime_validation_reason = f"Runtime validation failed with exit code {res.returncode}. Stderr:\n{res.stderr}"
+        except Exception as exc:
+            context.runtime_validation_status = "FAILED"
+            context.runtime_validation_reason = f"Runtime validation failed: execution exception: {exc}"
+    else:
+        # Run inside Docker container with GPU access
+        try:
+            import docker
+            client = docker.from_env()
+            volumes = {
+                os.path.abspath(generated_dir): {"bind": "/workspace", "mode": "rw"}
+            }
+            container_command = ["/workspace/" + latest_binary.name]
+            devices = []
+            if os.path.exists("/dev/kfd"):
+                devices.append("/dev/kfd:/dev/kfd:rwm")
+            if os.path.exists("/dev/dri"):
+                devices.append("/dev/dri:/dev/dri:rwm")
+
+            stdout_bytes = client.containers.run(
+                image=settings.SANDBOX_IMAGE,
+                command=container_command,
+                network_mode="none",
+                devices=devices,
+                volumes=volumes,
+                working_dir="/workspace",
+                stdout=True,
+                stderr=True,
+                remove=True,
+                timeout=15
+            )
+            stdout_str = stdout_bytes.decode("utf-8", errors="replace")
+            context.runtime_validation_status = "PASSED"
+            context.runtime_validation_reason = f"Runtime validation passed: binary executed successfully inside Docker AMD GPU. Output:\n{stdout_str}"
+        except Exception as exc:
+            context.runtime_validation_status = "FAILED"
+            context.runtime_validation_reason = f"Runtime validation failed inside Docker: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +194,9 @@ async def handle_preparing(context: WorkflowContext) -> str:
 
     workspace = Path(context.workspace_path)
     input_dir = workspace / "input"
-    
+
     zip_files = list(input_dir.glob("*.zip"))
-    
+
     # Check for nested ZIPs before extraction
     if check_nested_zip(input_dir):
         msg = "Uploaded archive appears to contain another archive instead of project files."
@@ -108,7 +206,7 @@ async def handle_preparing(context: WorkflowContext) -> str:
         context.error_category = NESTED_ARCHIVE_INPUT
         context.failure_reason = msg
         raise RuntimeError(msg)
-    
+
     for zip_path in zip_files:
         logger.info("[PREPARING] Extracting ZIP archive: %s", zip_path)
         # ponytail: record archive size
@@ -131,7 +229,7 @@ async def handle_preparing(context: WorkflowContext) -> str:
         except Exception as e:
             logger.error("[PREPARING] Failed to extract zip: %s", e)
             raise RuntimeError(f"PREPARING failed to extract zip: {e}")
-            
+
     return "PREFLIGHT"
 
 
@@ -219,17 +317,17 @@ async def handle_preflight(context: WorkflowContext) -> str:
 
     # ponytail: Large-project preflight guard
     from app.config.settings import settings
-    
+
     archive_size = getattr(context, "archive_size_bytes", 0)
     extracted_size = sum(p.stat().st_size for p in input_dir.rglob("*") if p.is_file())
-    
+
     cuda_files = scan.get("cu_files", []) + scan.get("cuh_files", [])
     cuda_files_count = len(cuda_files)
     total_files_count = scan.get("file_count", 0)
-    
+
     distinct_cu_dirs = {Path(p).parent for p in scan.get("cu_files", [])}
     independent_folders_count = len(distinct_cu_dirs)
-    
+
     # Check candidates (relative paths containing CUDA files)
     candidate_folders = []
     for d in distinct_cu_dirs:
@@ -239,12 +337,12 @@ async def handle_preflight(context: WorkflowContext) -> str:
                 candidate_folders.append(str(rel))
         except ValueError:
             candidate_folders.append(str(d))
-            
+
     is_cuda_samples_layout = (independent_folders_count > 5) or any("samples" in Path(d).name.lower() or "0_simple" in Path(d).name.lower() for d in distinct_cu_dirs)
-    
+
     too_large = False
     large_reasons = []
-    
+
     if archive_size > settings.max_upload_bytes:
         too_large = True
         large_reasons.append(f"archive size {archive_size} bytes exceeds limit of {settings.max_upload_bytes} bytes")
@@ -260,7 +358,7 @@ async def handle_preflight(context: WorkflowContext) -> str:
     if is_cuda_samples_layout:
         too_large = True
         large_reasons.append(f"cuda-samples style layout detected with {independent_folders_count} likely independent project folders")
-        
+
     if too_large:
         context.infrastructure_error = True
         context.compilation_success = False
@@ -268,7 +366,7 @@ async def handle_preflight(context: WorkflowContext) -> str:
         reason_msg = f"Project is too large to auto-migrate. Reasons: {', '.join(large_reasons)}."
         context.failure_reason = reason_msg
         context.last_compile_stderr = reason_msg
-        
+
         action = "Extract the archive and migrate one CUDA sample/project folder at a time."
         if candidate_folders:
             action += f" Candidate folders containing .cu files: {', '.join(candidate_folders)}."
@@ -422,7 +520,7 @@ async def handle_preflight(context: WorkflowContext) -> str:
         context.failure_reason = preflight_failure_message(report)
         context.last_compile_stderr = context.failure_reason
         context.recommended_next_action = recommended_next_action(context.error_category, report)
-        
+
         has_compiler_fail = any(
             cf.get("id") in ("hipcc", "docker_sdk", "docker_daemon", "docker_image", "docker_container_start")
             for cf in critical_failures
@@ -433,7 +531,7 @@ async def handle_preflight(context: WorkflowContext) -> str:
         else:
             context.compiler_mode = "test-only" if settings.USE_MOCK_COMPILER else "real"
             context.compile_status = "NOT_RUN"
-            
+
         from app.compiler.validation_confidence import compute_confidence
         level, reason = compute_confidence(
             hipify_ok=False,
@@ -443,7 +541,7 @@ async def handle_preflight(context: WorkflowContext) -> str:
         )
         context.validation_confidence = level
         context.validation_confidence_reason = reason
-        
+
         # Publish preflight failed event
         await publish_event(
             context.migration_id,
@@ -459,7 +557,7 @@ async def handle_preflight(context: WorkflowContext) -> str:
     context.compiler_mode = "test-only" if settings.USE_MOCK_COMPILER else "real"
     context.compile_status = "NOT_RUN"
     context.error_category = "NONE"
-    
+
     # Publish preflight completed event
     await publish_event(
         context.migration_id,
@@ -496,22 +594,33 @@ async def handle_hipify(context: WorkflowContext) -> str:
     Raises RuntimeError on hipify failure, which drives the state machine
     to the GENERATING_REPORT (failure) path.
     """
-    from app.compiler.hipify_runner import run_hipify
+    from app.compiler.hipify_runner import run_hipify, discover_include_dirs, detect_cuda_arch, detect_cuda_toolkit_path
     from app.workflow_engine.state_machine import publish_event
-
-    await publish_event(context.migration_id, "HIPIFY", "started", "HIP generation started.")
+    from app.config.settings import settings
 
     workspace = Path(context.workspace_path)
     input_dir = workspace / "input"
+
+    # ponytail: discover include paths, cuda target arch, and cuda toolkit path
+    extra_includes = discover_include_dirs(input_dir)
+    detected_arch = detect_cuda_arch(input_dir)
+    cuda_arch = detected_arch or settings.CUDA_PARSER_ARCH
+    cuda_path = detect_cuda_toolkit_path()
+
+    await publish_event(context.migration_id, "HIPIFY", "started", "HIP generation started.")
+
     generated_dir = workspace / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
+    # ponytail: apply semantic patches to generated migration workspace
+    copy_patches_to_generated(workspace, generated_dir)
+
     # Locate all files recursively in the input directory.
     all_files = [p for p in input_dir.rglob("*") if p.is_file()]
-    
+
     source_files = []
     other_files = []
-    
+
     supported_extensions = (".cu", ".hip", ".cpp", ".cuh", ".hpp", ".h")
     for p in all_files:
         if p.suffix.lower() in supported_extensions:
@@ -524,6 +633,26 @@ async def handle_hipify(context: WorkflowContext) -> str:
             f"HIPIFY: no supported source file found in {input_dir}. "
             "Expected at least one .cu / .hip / .cpp / .cuh file."
         )
+
+    # ponytail: compute invocation fingerprint
+    import hashlib
+    import json
+    source_files_hashes = []
+    for src in source_files:
+        try:
+            h = hashlib.sha256(src.read_bytes()).hexdigest()
+        except Exception:
+            h = "unknown"
+        source_files_hashes.append((str(src.relative_to(input_dir)), h))
+    fingerprint_data = {
+        "sources": sorted(source_files_hashes),
+        "extra_includes": sorted(list(extra_includes)),
+        "cuda_arch": str(cuda_arch),
+        "cuda_path": str(cuda_path)
+    }
+    fingerprint_str = json.dumps(fingerprint_data, sort_keys=True)
+    context.current_hipify_fingerprint = hashlib.sha256(fingerprint_str.encode("utf-8")).hexdigest()
+
 
     await publish_event(
         context.migration_id,
@@ -541,7 +670,7 @@ async def handle_hipify(context: WorkflowContext) -> str:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
         logger.info("[HIPIFY] Copied non-supported file directly: %s -> %s", src, dest)
-        
+
         # Translate CUDA references and compilers in build scripts (Makefile, CMakeLists, etc.)
         filename_lower = src.name.lower()
         if (
@@ -577,7 +706,7 @@ async def handle_hipify(context: WorkflowContext) -> str:
         nonlocal hipify_source_count, copied_hip_count, primary_output_path
         rel_path = src.relative_to(input_dir)
         dest = generated_dir / rel_path
-        
+
         # Change file extension from .cu to .hip
         if dest.suffix.lower() == ".cu":
             dest = dest.with_suffix(".hip")
@@ -611,6 +740,60 @@ async def handle_hipify(context: WorkflowContext) -> str:
             status="discovered"
         )
 
+        # ponytail: check if a patch exists for this target file
+        has_patch = False
+        patches_dir = workspace / "patches"
+        if patches_dir.exists():
+            patch_files = list(patches_dir.glob(f"patch_attempt_*_{dest.name}"))
+            if patch_files:
+                has_patch = True
+
+        if has_patch and dest.exists():
+            logger.info("[HIPIFY] Consuming patched source for %s from generated workspace: %s", src, dest)
+            patched_content = dest.read_text(encoding="utf-8", errors="replace")
+            if primary_output_path is None:
+                primary_output_path = str(dest)
+
+            try:
+                from datetime import datetime, timezone
+                provenance_comment = (
+                    f"// =========================================================================\n"
+                    f"// Generated by HIPForge (AI repaired)\n"
+                    f"// Source File: {dest.name}\n"
+                    f"// Target Architecture: {getattr(context, 'target_gpu_architecture', 'gfx90a')}\n"
+                    f"// Timestamp: {datetime.now(timezone.utc).isoformat()}\n"
+                    f"// Validation Status: Refer to final report for compile status\n"
+                    f"// =========================================================================\n\n"
+                )
+                if "Generated by HIPForge" not in patched_content:
+                    dest.write_text(provenance_comment + patched_content, encoding="utf-8")
+            except Exception as e:
+                logger.warning("[HIPIFY] Failed to prepend provenance comments to patched file %s: %s", dest, e)
+
+            context.file_lifecycle[rel_src_str]["converted"] = True
+            context.file_lifecycle[rel_src_str]["modified_by_ai"] = True
+            try:
+                context.file_lifecycle[rel_src_str]["generated_hash"] = hashlib.sha256(dest.read_bytes()).hexdigest()
+            except Exception:
+                context.file_lifecycle[rel_src_str]["generated_hash"] = orig_hash
+
+            await publish_log(
+                migration_id=context.migration_id,
+                message=f"[HIPIFY] Consumed patched source from generated workspace: {rel_src_str}",
+                original_path=rel_src_str,
+                generated_path=rel_dest_str,
+                stage="HIPIFY",
+                status="generated"
+            )
+            await publish_event(
+                context.migration_id,
+                "HIPIFY",
+                "hipify_completed",
+                f"HIP file written (patched): {rel_dest_str}",
+                file_path=rel_dest_str
+            )
+            return
+
         # Skip hipify for existing .hip files — copy directly
         if src.suffix.lower() == ".hip":
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -620,7 +803,7 @@ async def handle_hipify(context: WorkflowContext) -> str:
             copied_hip_count += 1
             if primary_output_path is None:
                 primary_output_path = str(dest)
-            
+
             # Prepend provenance comments to the copied HIP file
             try:
                 from datetime import datetime, timezone
@@ -663,17 +846,25 @@ async def handle_hipify(context: WorkflowContext) -> str:
                 file_path=rel_dest_str
             )
             return
-            
+
         dest.parent.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info("[HIPIFY] Translating %s -> %s", src, dest)
         import asyncio
-        result = await asyncio.to_thread(run_hipify, str(src), str(dest))
-        
+        result = await asyncio.to_thread(
+            run_hipify,
+            str(src),
+            str(dest),
+            extra_include_dirs=extra_includes,
+            cuda_parser_arch=cuda_arch,
+            cuda_toolkit_path=cuda_path,
+        )
+
         if not result["success"]:
             error_detail = result.get("stderr") or "hipify-clang returned failure"
+            context.last_hipify_stderr = error_detail
             logger.error("[HIPIFY] Translation failed on %s: %s", src, error_detail)
-            
+
             context.file_lifecycle[rel_src_str]["converted"] = False
             context.file_lifecycle[rel_src_str]["failure_reason"] = error_detail
 
@@ -696,7 +887,7 @@ async def handle_hipify(context: WorkflowContext) -> str:
                 context.failure_reason = error_detail
                 context.recommended_next_action = f"The hipify stage timed out after {settings.TIMEOUT_HIPIFY} seconds. Reduce the number of source files or split the project."
             raise RuntimeError(f"HIPIFY failed on {src.name}: {error_detail}")
-            
+
         if primary_output_path is None:
             primary_output_path = result["output_path"]
         hipify_source_count += 1
@@ -747,12 +938,12 @@ async def handle_hipify(context: WorkflowContext) -> str:
     await asyncio.gather(*tasks)
 
     context.hipify_output_path = primary_output_path
-    
+
     if copied_hip_count > 0:
         logger.info("[HIPIFY] Preserved %d existing HIP file(s) without re-translation.", copied_hip_count)
     if hipify_source_count > 0:
         logger.info("[HIPIFY] Translated %d CUDA source file(s).", hipify_source_count)
-    
+
     # Save the list of generated source files to Redis and the context
     relative_source_paths = []
     for src in source_files:
@@ -760,9 +951,9 @@ async def handle_hipify(context: WorkflowContext) -> str:
         if rel_path.suffix.lower() == ".cu":
             rel_path = rel_path.with_suffix(".hip")
         relative_source_paths.append(str(rel_path).replace("\\", "/"))
-        
+
     context.source_files = relative_source_paths
-    
+
     try:
         from app.redis.client import redis_client
         from app.redis.keys import metadata_key
@@ -771,7 +962,7 @@ async def handle_hipify(context: WorkflowContext) -> str:
         logger.info("[HIPIFY] Saved source_files to Redis metadata: %s", relative_source_paths)
     except Exception as redis_err:
         logger.warning("[HIPIFY] Failed to save source_files to Redis metadata: %s", redis_err)
-    
+
     # Run validation and deterministic replacement step immediately after hipify completes
     try:
         from app.compiler.validator import validate_and_replace_cuda_apis
@@ -846,10 +1037,10 @@ def copy_patches_to_generated(workspace_path: Path, generated_dir: Path):
     patches_dir = workspace_path / "patches"
     if not patches_dir.exists():
         return
-        
+
     import re
     patch_pattern = re.compile(r"^patch_attempt_(\d+)_(.+)$")
-    
+
     latest_patches = {}
     for p in patches_dir.glob("patch_attempt_*"):
         if p.is_file():
@@ -859,7 +1050,7 @@ def copy_patches_to_generated(workspace_path: Path, generated_dir: Path):
                 target_name = match.group(2)
                 if target_name not in latest_patches or attempt > latest_patches[target_name]["attempt"]:
                     latest_patches[target_name] = {"attempt": attempt, "path": p}
-                    
+
     for target_name, info in latest_patches.items():
         patch_file = info["path"]
         candidates = list(generated_dir.rglob(target_name))
@@ -870,9 +1061,11 @@ def copy_patches_to_generated(workspace_path: Path, generated_dir: Path):
                 logger.info("[COMPILING] Copied latest patch %s -> %s", patch_file.name, dest)
         else:
             dest = generated_dir / target_name
+            dest.parent.mkdir(parents=True, exist_ok=True)
             import shutil
             shutil.copy2(patch_file, dest)
             logger.info("[COMPILING] Copied patch to generated root %s -> %s", patch_file.name, dest)
+
 
 
 # ---------------------------------------------------------------------------
@@ -918,7 +1111,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
     for f in gen_files:
         if f.is_file():
             logger.info("  - %s", f.relative_to(generated_dir))
-            
+
     # Verify every source file exists
     source_files = getattr(context, "source_files", [])
     if not source_files:
@@ -934,14 +1127,14 @@ async def handle_compiling(context: WorkflowContext) -> str:
                 context.source_files = source_files
         except Exception as exc:
             logger.warning("[COMPILING] Failed to load source_files from Redis: %s", exc)
-            
+
     if source_files:
         missing_files = []
         for rel_path in source_files:
             file_path = generated_dir / rel_path
             if not file_path.exists():
                 missing_files.append(rel_path)
-                
+
         if missing_files:
             error_msg = f"Missing source files: {', '.join(missing_files)}"
             logger.error("[COMPILING] Preflight check failed: %s", error_msg)
@@ -961,7 +1154,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8", errors="replace")
                 context.original_contents[rel_path] = content
-                
+
                 # Check for and apply cached patch
                 cached_patch = get_cached_patch(content)
                 if cached_patch:
@@ -983,7 +1176,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
             shutil.copy2(makefile_hipforge, generated_dir / "Makefile")
             hip_source = str(generated_dir / "Makefile")
             logger.info("[COMPILING] Using generated build plan: Makefile.hipforge -> Makefile")
-            
+
     if not hip_source:
         hip_source = context.hipify_output_path
         if not hip_source or not Path(hip_source).exists():
@@ -1029,7 +1222,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
 
     from app.redis.client import redis_client
     from app.redis.keys import metadata_key
-    
+
     target_arch = None
     try:
         metadata = await redis_client.hgetall(metadata_key(context.migration_id))
@@ -1055,10 +1248,10 @@ async def handle_compiling(context: WorkflowContext) -> str:
         from app.redis.client import redis_client
         import json
         from datetime import datetime, timezone
-        
+
         channel = compiler_channel(context.migration_id)
         log_list_key = compiler_log_key(context.migration_id)
-        
+
         # Publish and store compilation attempt header
         header_payload = {
             "type": "compiler_log",
@@ -1071,7 +1264,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
 
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
-        
+
         for line in stdout.splitlines():
             if line.strip():
                 payload = {
@@ -1082,7 +1275,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
                 }
                 await redis_client.publish(channel, json.dumps(payload))
                 await redis_client.rpush(log_list_key, json.dumps(payload))
-                
+
         for line in stderr.splitlines():
             if line.strip():
                 payload = {
@@ -1122,18 +1315,18 @@ async def handle_compiling(context: WorkflowContext) -> str:
         try:
             from app.compiler.sca import analyze
             from app.models.compiler_error import CompilerError
-            
+
             sca_result = analyze(hip_source)
             issues = sca_result.get("issues", [])
             high_severity_issues = [iss for iss in issues if iss.severity == "high"]
-            
+
             if high_severity_issues:
                 logger.warning(
                     "[COMPILING] Semantic Post-Validation failed: %d High-severity semantic compatibility issue(s) detected.",
                     len(high_severity_issues)
                 )
                 comp_ok = False
-                
+
                 # Convert CompatibilityIssue objects to CompilerError models
                 semantic_errors = []
                 for iss in high_severity_issues:
@@ -1146,20 +1339,20 @@ async def handle_compiling(context: WorkflowContext) -> str:
                         code=iss.pattern_id
                     )
                     semantic_errors.append(sem_err)
-                
+
                 compiler_errors = semantic_errors
                 last_stderr = "Semantic Post-Validation failed: " + "; ".join([e.message for e in semantic_errors])
-                
+
                 # Stream these errors to the client compiler logs over websocket so they see the semantic errors!
                 try:
                     from app.redis.keys import compiler_channel, compiler_log_key
                     from app.redis.client import redis_client
                     import json
                     from datetime import datetime, timezone
-                    
+
                     channel = compiler_channel(context.migration_id)
                     log_list_key = compiler_log_key(context.migration_id)
-                    
+
                     for err in semantic_errors:
                         payload = {
                             "type": "compiler_log",
@@ -1180,6 +1373,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
     context.compiler_errors = compiler_errors
     context.last_compile_stderr = last_stderr
     context.compile_status = "PASSED" if comp_ok else "FAILED"
+    context.static_validation_status = "PASSED" if comp_ok else "FAILED"
 
     # ── Update file lifecycle metadata & publish log events ─────────────
     try:
@@ -1188,7 +1382,7 @@ async def handle_compiling(context: WorkflowContext) -> str:
             f_meta["compile_status"] = "PASSED" if comp_ok else "FAILED"
             if not comp_ok:
                 f_meta["failure_reason"] = last_stderr[:500]
-            
+
             await publish_log(
                 migration_id=context.migration_id,
                 message=f"[COMPILING] Compile status for {orig_rel_path}: {f_meta['compile_status']}" + (f" (Error: {f_meta['failure_reason']})" if not comp_ok else ""),
@@ -1314,7 +1508,7 @@ async def handle_analyzing(context: WorkflowContext) -> str:
 
     # ── Safeguards ──────────────────────────────────────────────────────────
     stderr_val = context.last_compile_stderr or ""
-    
+
     from app.compiler.error_parser import classify_compiler_error
     classification = classify_compiler_error(stderr_val)
     context.error_category = classification
@@ -1359,7 +1553,7 @@ async def handle_analyzing(context: WorkflowContext) -> str:
             or "cannot find" in stderr_val.lower()
             or "no such file" in stderr_val.lower()
         )
-        
+
         if is_missing_dep:
             classification = "DEPENDENCY_ERROR"
             context.error_category = "DEPENDENCY_ERROR"
@@ -1499,7 +1693,7 @@ async def handle_analyzing(context: WorkflowContext) -> str:
                     error_line = getattr(first_error, "line")
                 elif isinstance(first_error, dict) and "line" in first_error:
                     error_line = first_error["line"]
-            
+
             from app.compiler.ast_slicing import get_optimized_error_context
             source_code = get_optimized_error_context(hip_source_path, error_line)
             logger.info("[ANALYZING] Extracted semantic slice around line %d for token optimization.", error_line)
@@ -1870,10 +2064,10 @@ async def handle_generating_report(context: WorkflowContext) -> str:
     )
     from app.workflow_engine.state_machine import publish_event
     await publish_event(context.migration_id, "GENERATING_REPORT", "started", "Report generation started.")
-    
+
     logger.info("[GENERATING_REPORT] Commencing report generation...")
     migration_id = context.migration_id
-    
+
     try:
         # Publish AI repair failed if compilation failed and budget was exhausted
         if not getattr(context, "compilation_success", False):
@@ -1894,9 +2088,9 @@ async def handle_generating_report(context: WorkflowContext) -> str:
         await generate_git_patch(migration_id)
         await build_zip(migration_id)
         await write_history_summary(migration_id, context)
-        
+
         await publish_event(context.migration_id, "GENERATING_REPORT", "completed", "Report generated successfully.")
-        
+
         from app.workflow_engine.state_machine import publish_log
         await publish_log(
             migration_id=context.migration_id,
@@ -1907,7 +2101,7 @@ async def handle_generating_report(context: WorkflowContext) -> str:
         logger.info("[GENERATING_REPORT] Report generation complete.")
     except Exception as exc:
         logger.exception("[GENERATING_REPORT] Failed to generate reports: %s", exc)
-        
+
     return "COMPLETED"
 
 
