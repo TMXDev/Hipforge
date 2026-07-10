@@ -33,6 +33,12 @@ export interface MigrationStatus {
   main_error?: string;
   error_category?: string;
   recommended_next_action?: string;
+  validation_confidence_reason?: string;
+  target_gpu_architecture?: string;
+  actual_compiled_architecture?: string;
+  ai_repair_status?: string;
+  patch_audit?: any[];
+  compilation_history?: any[];
 }
 
 /** Standardised API error body returned by the backend */

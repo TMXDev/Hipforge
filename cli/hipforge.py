@@ -258,7 +258,7 @@ def zip_project(project_path: Path) -> Path:
 
     temp_zip = Path(tempfile.mktemp(suffix=".zip"))
     print_step(f"Compressing project {project_path.name}...")
-    
+
     with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
         if project_path.is_file():
             zipf.write(project_path, project_path.name)
@@ -267,7 +267,7 @@ def zip_project(project_path: Path) -> Path:
                 if file_path.is_file() and not any(part.startswith('.') for part in file_path.parts):
                     rel_path = file_path.relative_to(project_path)
                     zipf.write(file_path, rel_path)
-                    
+
     print_success(f"Compressed into temporary package: {temp_zip.name} ({temp_zip.stat().st_size / 1024:.1f} KB)")
     return temp_zip
 
@@ -275,7 +275,7 @@ def draw_stage_pipeline(active_stage: str):
     """Draws a beautiful progress line of the migration workflow stages."""
     stages = ["QUEUED", "PREPARING", "PREFLIGHT", "HIPIFY", "SCA", "COMPILING", "ANALYZING", "PATCHING", "GENERATING_REPORT"]
     formatted = []
-    
+
     for stage in stages:
         if stage == active_stage.upper():
             formatted.append(f"{Colors.BOLD}{Colors.GOLD}[{stage}]{Colors.ENDC}")
@@ -288,19 +288,19 @@ def draw_stage_pipeline(active_stage: str):
             arrow = " ──► "
     except Exception:
         pass
-        
+
     print(f"\rPipeline: {arrow.join(formatted)}", end="", flush=True)
 
 async def stream_logs(host_url: str, migration_id: str):
     """Connects to WebSocket and streams migration logs live."""
     ws_host = host_url.replace("http://", "ws://").replace("https://", "wss://")
     ws_url = f"{ws_host}/ws/v1/migrate/{migration_id}/stream"
-    
+
     print_step("Connecting to migration event stream...")
     try:
         async with websockets.connect(ws_url) as websocket:
             print_success("Connected to event stream. Streaming live logs...\n")
-            
+
             while True:
                 try:
                     try:
@@ -317,23 +317,23 @@ async def stream_logs(host_url: str, migration_id: str):
                             pass
                         continue
                     data = json.loads(message)
-                    
+
                     m_type = data.get("type")
                     if m_type in ("status", "event"):
                         status = (data.get("status") or "").lower()
                         stage = (data.get("stage") or status).upper()
                         msg = data.get("message", "")
-                        
+
                         # ponytail: track elapsed time and seen stages
                         if not hasattr(asyncio.current_task(), "seen_stages"):
                             asyncio.current_task().seen_stages = set()
                             asyncio.current_task().stage_start_times = {}
-                            
+
                         seen = asyncio.current_task().seen_stages
                         starts = asyncio.current_task().stage_start_times
-                        
+
                         seen.add(stage)
-                        
+
                         elapsed = ""
                         if status == "started":
                             import time
@@ -347,7 +347,7 @@ async def stream_logs(host_url: str, migration_id: str):
                             print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage} ({status.capitalize()}{elapsed}){Colors.ENDC}")
                         else:
                             print(f"\n{Colors.BOLD}{Colors.CYAN}>>> Stage Transition: {stage}{Colors.ENDC}")
-                            
+
                         draw_stage_pipeline(stage)
                         print() # New line after the pipeline draw
                         if msg:
@@ -355,7 +355,7 @@ async def stream_logs(host_url: str, migration_id: str):
                                 print(f"  {Colors.FAIL}{msg}{Colors.ENDC}")
                             else:
                                 print(f"  {Colors.GREEN}{msg}{Colors.ENDC}")
-                                
+
                         if stage == "GENERATING_REPORT" and status == "started":
                             if "ANALYZING" not in seen:
                                 # We skipped AI repair!
@@ -385,25 +385,25 @@ def download_and_extract(host_url: str, migration_id: str, output_path: Path):
     """Downloads the completed zip report package, saves it, and extracts it to a clean subdirectory."""
     download_url = f"{host_url}/api/v1/migrate/{migration_id}/download"
     print_step(f"Downloading migration package from {download_url}...")
-    
+
     response = requests.get(download_url)
     if response.status_code != 200:
         print_fail(f"Download failed with status: {response.status_code}")
         return False
-        
+
     output_path.mkdir(parents=True, exist_ok=True)
     zip_out = output_path / f"{migration_id}.zip"
     zip_out.write_bytes(response.content)
     print_success(f"Saved migration ZIP to: {zip_out.resolve()}")
-    
+
     extract_dir = output_path / migration_id
     print_step(f"Extracting package to subdirectory: {extract_dir}...")
     extract_dir.mkdir(parents=True, exist_ok=True)
-    
+
     import io
     with zipfile.ZipFile(io.BytesIO(response.content), 'r') as zipf:
         zipf.extractall(extract_dir)
-        
+
     print_success(f"Successfully extracted project to: {extract_dir.resolve()}")
     return True
 
@@ -411,7 +411,7 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
     zip_file = None
     try:
         zip_file = zip_project(project_path)
-        
+
         # Validate architecture against supported targets before sending to server
         try:
             validate_target_architecture(target_arch)
@@ -421,13 +421,13 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
 
         upload_url = f"{host_url}/api/v1/migrate/upload"
         print_step(f"Uploading project to {upload_url}...")
-        
+
         # Base64 encode the zipped content
         zip_bytes = zip_file.read_bytes()
         base64_data = base64.b64encode(zip_bytes).decode('utf-8')
-        
+
         filename = project_path.name if project_path.name.endswith('.zip') else (project_path.name + '.zip')
-            
+
         payload = {
             "file": base64_data,
             "filename": filename,
@@ -435,28 +435,28 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
             "retry_budget": retry_budget,
             "migration_mode": "file"
         }
-        
+
         response = requests.post(upload_url, json=payload)
-            
+
         if response.status_code not in (200, 202):
             print_fail(f"Upload failed: HTTP {response.status_code} - {response.text}")
             return
-            
+
         res_data = response.json()
         migration_id = res_data.get("migration_id")
         if not migration_id:
             print_fail(f"Invalid response from server: {res_data}")
             return
-            
+
         print_success(f"Migration job accepted. ID: {migration_id}")
-        
+
         # Store in session history
         migration_history.append({
             "id": migration_id,
             "project": project_path.name,
             "arch": target_arch
         })
-        
+
         # Check initial status first to avoid blocking on already completed jobs
         final_status = None
         try:
@@ -471,7 +471,7 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
 
         if not final_status:
             final_status = await stream_logs(host_url, migration_id)
-        
+
         if not final_status:
             # ponytail: WS dropped — poll until terminal state or timeout; ceiling = HIPFORGE_POLL_TIMEOUT seconds
             try:
@@ -501,7 +501,7 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
                     pass
                 await asyncio.sleep(interval)
                 elapsed += interval
-                
+
         if final_status and final_status.upper() == "COMPLETED":
             download_and_extract(host_url, migration_id, output_path)
 
@@ -564,24 +564,59 @@ async def run_migration(project_path: Path, target_arch: str, output_path: Path,
         next_act = detail.get("recommended_next_action") or ""
         report_path = f"workspace/{migration_id}/reports/migration_report.md"
 
+        # Get actual and requested architectures
+        req_arch = detail.get("target_gpu_architecture") or target_arch
+        act_arch = detail.get("actual_compiled_architecture") or ""
+
+        # Validation statuses
+        comp_val = detail.get("compile_status") or "NOT_RUN"
+        if comp_val.upper() == "PASSED":
+            if (detail.get("validation_confidence") or "").upper() == "LOW":
+                comp_val_str = "Compile validated with warning"
+            else:
+                comp_val_str = "Compile validated"
+        else:
+            comp_val_str = comp_val
+
+        rt_val = detail.get("runtime_validation_status") or "NOT_RUN"
+        if rt_val.upper() == "PASSED":
+            rt_val_str = "Runtime validated"
+        else:
+            rt_val_str = "Runtime not tested"
+
+        semantic_warning = ""
+        if (detail.get("validation_confidence") or "").upper() == "LOW":
+            semantic_warning = detail.get("validation_confidence_reason") or ""
+
+        # AI Repair & Patches
+        ai_repair = detail.get("ai_repair_status") or "not_needed"
+        patches_list = detail.get("patch_audit") or []
+        patch_summary_str = ""
+        if patches_list:
+            files_modified = [p.get("target_file") for p in patches_list if p.get("accepted")]
+            lines_changed = sum(p.get("changed_lines", 0) for p in patches_list if p.get("accepted"))
+            patch_summary_str = f"{len(files_modified)} file(s) patched, {lines_changed} line(s) changed"
+
         print(f"\n{Colors.BOLD}{Colors.GOLD}Migration Summary{Colors.ENDC}")
         print(f"Job ID: {migration_id}")
-        print(f"Target architecture: {target_arch}")
-        print(f"Final state: {terminal_status}")
-        print(f"Compiler mode: {compiler_mode}")
-        print(f"Compiler validation: {compile_status}")
-        print(f"Validation confidence: {val_confidence}")
-        print(f"Runtime validation: {runtime_val}")
+        print(f"Final Status: {terminal_status}")
+        print(f"Requested Architecture: {req_arch}")
+        if act_arch:
+            print(f"Actual Compiled Architecture: {act_arch}")
+        print(f"Compile Validation: {comp_val_str}")
+        print(f"Runtime Validation: {rt_val_str}")
+        if semantic_warning:
+            print(f"Semantic Warning: {Colors.WARNING}{semantic_warning}{Colors.ENDC}")
+        print(f"AI Repair Status: {ai_repair}")
+        if patch_summary_str:
+            print(f"Patch Summary: {patch_summary_str}")
         if main_err:
-            print(f"Main error: {main_err}")
-        if error_category and error_category != "NONE":
-            print(f"Error category: {error_category}")
+            print(f"Main Error: {main_err}")
         if next_act:
-            print(f"Next action: {next_act}")
-        print(f"Report: {report_path}")
+            print(f"Next Action: {next_act}")
         if terminal_status.upper() == "COMPLETED" and compile_status.upper() == "PASSED":
             artifact_dir = output_path / migration_id
-            print(f"Artifact: {artifact_dir.resolve()}")
+            print(f"Output Path: {artifact_dir.resolve()}")
 
     finally:
         if zip_file and zip_file.exists() and zip_file != project_path:
@@ -637,7 +672,7 @@ def run_interactive_cli():
                 buffer = ""
 
             options = []
-            
+
             if not buffer or buffer.startswith("/"):
                 if not words or (len(words) == 1 and not buffer.endswith(" ")):
                     options = [cmd for cmd in commands if cmd.startswith(text)]
@@ -658,17 +693,17 @@ def run_interactive_cli():
                             prev = words[-2].lower()
                             if prev == "--arch":
                                 options = [arch for arch in architectures if arch.startswith(text)]
-                                
+
             if state < len(options):
                 return options[state]
             return None
 
         readline.set_completer(completer)
         readline.parse_and_bind("tab: complete")
-    
+
     # Try to clear screen on launch
     os.system('cls' if os.name == 'nt' else 'clear')
-    
+
     print(f"{Colors.BOLD}{Colors.PURPLE}    __  ______________________                     {Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.PURPLE}   / / / /  _/ __ \\____  ____/___  _________ _____{Colors.ENDC}")
     print(f"{Colors.BOLD}{Colors.PURPLE}  / /_/ // // /_/ / __ `/ __ `/ __ \\/ ___/ __ `/ _ \\{Colors.ENDC}")
@@ -677,29 +712,29 @@ def run_interactive_cli():
     print(f"{Colors.BOLD}{Colors.PURPLE}                /____//____/           /____/       {Colors.ENDC}")
     print(f"                  {Colors.GOLD}Premium Command Console v1.0.0{Colors.ENDC}\n")
     print(f"Type {Colors.BOLD}/help{Colors.ENDC} for commands list, or {Colors.BOLD}/exit{Colors.ENDC} to exit.\n")
-    
+
     while True:
         try:
             line = input(f"{Colors.BOLD}{Colors.BLUE}hipforge>{Colors.ENDC} ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting.")
             break
-            
+
         if not line:
             continue
-            
+
         if line.lower() in ("/exit", "/quit"):
             print("Exiting.")
             break
-            
+
         if line.lower() == "/help":
             show_interactive_help()
             continue
-            
+
         if line.lower() == "/clear":
             os.system('cls' if os.name == 'nt' else 'clear')
             continue
-            
+
         if line.lower() == "/history":
             # Try backend history API first; fall back to session list
             fetched = run_history_command(default_host)
@@ -715,21 +750,21 @@ def run_interactive_cli():
             print(f"  Backend Host: {default_host}")
             print(f"  Default Arch: {default_arch}")
             print(f"  Retry Budget: {default_attempts} attempts")
-            
+
             # Ping backend
             try:
                 resp = requests.get(f"{default_host}/api/v1/health/check", timeout=3)
                 if resp.status_code == 200:
                     data = resp.json()
                     print_success("Backend Server connection is ONLINE.")
-                    
+
                     # Redis status
                     redis_check = next((c for c in data.get("checks", []) if c.get("id") == "redis_reachable"), None)
                     if redis_check and redis_check.get("status") == "pass":
                         print_success("Redis Connectivity: ONLINE")
                     else:
                         print_fail("Redis Connectivity: OFFLINE")
-                        
+
                     # Worker status
                     worker_check = next((c for c in data.get("checks", []) if c.get("id") == "worker_reachable"), None)
                     if worker_check and worker_check.get("status") == "pass":
@@ -794,7 +829,7 @@ def run_interactive_cli():
                 continue
             key = parts[1].lower()
             val = parts[2]
-            
+
             if key == "host":
                 default_host = val
                 print_success(f"Default Host updated to: {default_host}")
@@ -816,11 +851,11 @@ def run_interactive_cli():
             if len(parts) < 2:
                 print_fail("Usage: /cancel <migration_id> [--host <host_url>]")
                 continue
-            
+
             cancel_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
             cancel_parser.add_argument("migration_id", type=str)
             cancel_parser.add_argument("--host", type=str, default=default_host)
-            
+
             try:
                 cancel_args = cancel_parser.parse_args(parts[1:])
                 url = f"{cancel_args.host}/api/v1/migrate/{cancel_args.migration_id}/cancel"
@@ -836,7 +871,7 @@ def run_interactive_cli():
         if line.startswith("/migrate"):
             parts = shlex.split(line)
             parts.pop(0) # remove /migrate
-            
+
             if not parts:
                 # Launch the interactive wizard setup!
                 print(f"\n{Colors.BOLD}{Colors.GOLD}─── HIPForge Migration Setup Assistant ───{Colors.ENDC}")
@@ -848,13 +883,13 @@ def run_interactive_cli():
                 if not proj_path.exists():
                     print_fail(f"Aborted: Target path '{proj_path}' does not exist.")
                     continue
-                    
+
                 output_input = input(f"{Colors.BOLD}[2/4] Output folder path for results:{Colors.ENDC} ").strip()
                 if not output_input:
                     print_fail("Aborted: Output folder is required.")
                     continue
                 out_path = Path(output_input)
-                
+
                 print(f"{Colors.BOLD}[3/4] Select Target AMD GPU Architecture:{Colors.ENDC}")
                 print("  [1] gfx906 (Vega 20)")
                 print("  [2] gfx908 (CDNA 1 / MI100)")
@@ -876,14 +911,14 @@ def run_interactive_cli():
                     "8": "gfx1100"
                 }
                 arch = arch_map.get(arch_choice, arch_choice if arch_choice else default_arch)
-                
+
                 attempts_input = input(f"{Colors.BOLD}[4/4] Error repair attempts budget [default {default_attempts}]:{Colors.ENDC} ").strip()
                 attempts = int(attempts_input) if attempts_input.isdigit() else default_attempts
-                
+
                 print_step(f"Executing Wizard Migration: {proj_path} -> {out_path} (Arch: {arch}, Attempts: {attempts})")
                 asyncio.run(run_migration(proj_path, arch, out_path, default_host, attempts))
                 continue
-            
+
             # Non-interactive command parsed from args
             mig_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
             mig_parser.add_argument("path", type=str)
@@ -892,7 +927,7 @@ def run_interactive_cli():
             mig_parser.add_argument("--arch", type=str, default=default_arch)
             mig_parser.add_argument("--attempts", type=int, default=default_attempts)
             mig_parser.add_argument("--host", type=str, default=default_host)
-            
+
             try:
                 mig_args = mig_parser.parse_args(parts)
                 proj_path = Path(mig_args.path)
@@ -904,23 +939,23 @@ def run_interactive_cli():
                 if not proj_path.exists():
                     print_fail(f"Error: Target path '{proj_path}' does not exist.")
                     continue
-                    
+
                 print_step(f"Starting migration: {proj_path} -> {out_path} (target: {mig_args.arch}, budget: {mig_args.attempts})")
                 asyncio.run(run_migration(proj_path, mig_args.arch, out_path, mig_args.host, mig_args.attempts))
             except Exception as e:
                 print_fail(f"Invalid /migrate command syntax. Use /help to check options.")
             continue
-            
+
         if line.startswith("/status"):
             parts = shlex.split(line)
             if len(parts) < 2:
                 print_fail("Usage: /status <migration_id> [--host <host_url>]")
                 continue
-            
+
             stat_parser = argparse.ArgumentParser(exit_on_error=False, add_help=False)
             stat_parser.add_argument("migration_id", type=str)
             stat_parser.add_argument("--host", type=str, default=default_host)
-            
+
             try:
                 stat_args = stat_parser.parse_args(parts[1:])
                 url = f"{stat_args.host}/api/v1/migrate/{stat_args.migration_id}/status"
@@ -933,7 +968,7 @@ def run_interactive_cli():
             except Exception as e:
                 print_fail(f"Invalid /status command syntax. Use /help.")
             continue
-            
+
         if line.startswith("/logs"):
             parts = shlex.split(line)
             if len(parts) < 2:
@@ -1041,12 +1076,12 @@ def main():
         description=f"{Colors.HEADER}HIPForge CLI Tool — Automate CUDA to ROCm/HIP Migrations{Colors.ENDC}"
     )
     subparsers = parser.add_subparsers(dest="command", help="CLI Subcommands")
-    
+
     # Subcommand: start / shell / interactive  (all aliases → same behaviour)
     start_parser = subparsers.add_parser("start", help="Launch interactive shell")
     subparsers.add_parser("shell", help="Launch interactive shell (alias for start)")
     subparsers.add_parser("interactive", help="Launch interactive shell (alias for start)")
-    
+
     # Subcommand: migrate
     migrate_parser = subparsers.add_parser("migrate", help="Run direct migration (B2B/Non-interactive)")
     migrate_parser.add_argument("project_path", type=str, help="Path to CUDA file or folder to migrate")
@@ -1079,7 +1114,7 @@ def main():
     # Subcommand: scan
     scan_parser = subparsers.add_parser("scan", help="Scan a CUDA project and print file inventory without migrating")
     scan_parser.add_argument("project_path", type=str, help="Path to CUDA project folder or file")
-    
+
     args = parser.parse_args()
 
     if args.command in ("start", "shell", "interactive"):
@@ -1102,7 +1137,7 @@ def main():
                 local=args.local,
                 json_output=args.json,
                 verbose=args.verbose,
-                
+
             )
         except Exception as e:
             print_fail(f"Doctor failed: {e}")

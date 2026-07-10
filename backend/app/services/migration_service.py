@@ -78,7 +78,8 @@ async def initiate_migration(
         "current_state": "QUEUED",
         "workspace_path": workspace_path,
         "compiler": "hipcc",
-        "target_architecture": target_gpu_architecture
+        "target_architecture": target_gpu_architecture,
+        "migration_mode": migration_mode
     }
     await app.redis.client.redis_client.hset(metadata_key(migration_id), mapping=metadata)
     

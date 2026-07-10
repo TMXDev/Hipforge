@@ -41,3 +41,8 @@ class MigrationStatusResponse(BaseModel):
     compiler_mode: str | None = None
     compile_command: str | None = None
     main_error: str | None = None
+    target_gpu_architecture: str | None = None
+    actual_compiled_architecture: str | None = None
+    ai_repair_status: str | None = None
+    patch_audit: list | None = None
+    compilation_history: list | None = None

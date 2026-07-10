@@ -92,6 +92,9 @@ async def run_worker():
                     target_arch = metadata.get("target_architecture") if isinstance(metadata, dict) else None
                     if target_arch:
                         context.target_gpu_architecture = target_arch
+                    migration_mode = metadata.get("migration_mode") if isinstance(metadata, dict) else None
+                    if migration_mode:
+                        context.migration_mode = migration_mode
                 except Exception as exc:
                     logger.warning(f"Failed to read migration metadata in worker: {exc}")
                 if payload.get("test_mode"):

@@ -7,6 +7,7 @@
 export type JobState =
   | "QUEUED"
   | "PREPARING"
+  | "PREFLIGHT"
   | "HIPIFY"
   | "SCA"
   | "COMPILING"
@@ -53,6 +54,11 @@ export const STAGE_META: StageMeta[] = [
     description: "Creating isolated workspace and writing source files.",
   },
   {
+    state: "PREFLIGHT",
+    label: "Preflight Validation",
+    description: "Running environment validation and preflight checks.",
+  },
+  {
     state: "HIPIFY",
     label: "HIPIFY Translation",
     description: "Running hipify-clang to translate CUDA to HIP.",
@@ -76,11 +82,6 @@ export const STAGE_META: StageMeta[] = [
     state: "PATCHING",
     label: "AI Patching",
     description: "Patch Agent applying targeted code fix.",
-  },
-  {
-    state: "RESEARCHING",
-    label: "Research",
-    description: "Research Agent querying AMD documentation.",
   },
   {
     state: "GENERATING_REPORT",

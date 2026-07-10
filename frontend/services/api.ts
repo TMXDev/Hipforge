@@ -43,7 +43,8 @@ const toBase64 = (file: File): Promise<string> =>
 export async function submitMigration(
   file: File,
   targetGpuArchitecture: string,
-  retryBudget: number
+  retryBudget: number,
+  migrationMode: string
 ): Promise<MigrationResponse> {
   const base64File = await toBase64(file);
   const payload = {
@@ -51,7 +52,7 @@ export async function submitMigration(
     filename: file.name,
     target_gpu_architecture: targetGpuArchitecture,
     retry_budget: retryBudget,
-    migration_mode: "file",
+    migration_mode: migrationMode,
   };
 
   const response = await fetch(`${API_BASE_URL}/api/v1/migrate/upload`, {

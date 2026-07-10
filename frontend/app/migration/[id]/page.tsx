@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { ArrowLeft, Download, RefreshCw, Clock, Timer } from "lucide-react";
+import { ArrowLeft, Download, RefreshCw, Clock, Timer, CheckCircle, XCircle, AlertCircle, ShieldAlert, Terminal, History, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import Timeline from "@/components/Timeline";
 import CompilerLog from "@/components/CompilerLog";
@@ -10,6 +10,7 @@ import JournalViewer from "@/components/JournalViewer";
 import ReportViewer from "@/components/ReportViewer";
 import { useWebSocket, type StreamEvent } from "@/hooks/useWebSocket";
 import { getDownloadUrl, getMigrationStatus, getCompilerLogs } from "@/services/api";
+import type { MigrationStatus } from "@/types/migration";
 
 /**
  * Migration Dashboard page — /migration/[id]
@@ -33,12 +34,15 @@ export default function MigrationPage() {
   const [isTerminal, setIsTerminal] = useState(false);
   const [migrationStatus, setMigrationStatus] = useState<string>("QUEUED");
   const [migrationStage, setMigrationStage] = useState<string>("");
+  const [statusData, setStatusData] = useState<MigrationStatus | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [startTime] = useState<number>(Date.now());
   const [elapsedDisplay, setElapsedDisplay] = useState<string>("0s");
 
   // Ref to avoid stale closure in polling interval
   const isTerminalRef = useRef(false);
+  const hasLoadedRef = useRef(false);
 
   const markTerminal = useCallback(() => {
     if (!isTerminalRef.current) {
@@ -56,6 +60,9 @@ export default function MigrationPage() {
         const s = await getMigrationStatus(migrationId);
         if (cancelled) return;
 
+        setStatusData(s);
+        hasLoadedRef.current = true;
+        setPollError(null);
         const st = (s.status || "").toUpperCase();
         setMigrationStatus(st);
         setMigrationStage(s.stage || s.current_stage || "");
@@ -64,8 +71,10 @@ export default function MigrationPage() {
         if (st === "COMPLETED" || st === "FAILED") {
           markTerminal();
         }
-      } catch {
-        // silently ignore poll failures
+      } catch (err: any) {
+        if (!hasLoadedRef.current) {
+          setPollError(err.message || "Failed to load migration status. The backend might be offline or the job ID is invalid.");
+        }
       }
     }
 
@@ -334,6 +343,21 @@ export default function MigrationPage() {
 
       {/* ── Dashboard Sections — top-border-only editorial pattern ── */}
       <div className="space-y-12">
+        {/* Error State */}
+        {pollError && !statusData && (
+          <div className="border border-red-500/20 bg-red-500/5 p-6 text-center space-y-4">
+            <AlertCircle className="h-10 w-10 mx-auto text-red-600 dark:text-red-400" />
+            <h2 className="font-serif text-xl font-normal text-red-700 dark:text-red-400">Migration Load Error</h2>
+            <p className="text-xs text-themeTextMuted max-w-md mx-auto leading-relaxed">{pollError}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="btn-primary inline-flex items-center gap-2"
+            >
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              <span>Retry Connection</span>
+            </button>
+          </div>
+        )}
 
         {/* Panel 1: Live Progress Timeline */}
         <section aria-labelledby="timeline-heading">
@@ -411,7 +435,275 @@ export default function MigrationPage() {
 
         <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} aria-hidden="true" />
 
-        {/* Panel 4: Report Viewer */}
+        {/* Panel 4: Validation & Architecture Evidence */}
+        {statusData && (
+          <section aria-labelledby="validation-heading">
+            <div className="mb-6 pt-6" style={{ borderTop: "1px solid var(--border-primary)" }}>
+              <h2
+                id="validation-heading"
+                className="text-[10px] font-medium tracking-[0.3em] uppercase text-themeTextMuted"
+              >
+                Validation &amp; Architecture Evidence
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Honest Validation Summary */}
+              <div className="border border-themeBorder p-5 bg-themeCard">
+                <h3 className="text-xs font-semibold tracking-wider uppercase mb-4 text-[#D4AF37]">
+                  Honest Validation Summary
+                </h3>
+                <div className="space-y-3 font-mono text-xs">
+                  {/* Translation */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-themeBorder/40">
+                    <span className="text-themeTextMuted">Translation</span>
+                    <span className={`font-semibold ${
+                      statusData.translation_status === "PASSED" ? "text-emerald-500" :
+                      statusData.translation_status === "FAILED" ? "text-red-500" : "text-themeTextMuted"
+                    }`}>
+                      {statusData.translation_status ?? "NOT_RUN"}
+                    </span>
+                  </div>
+                  {/* Static validation */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-themeBorder/40">
+                    <span className="text-themeTextMuted">Static Validation</span>
+                    <span className={`font-semibold ${
+                      statusData.static_validation_status === "PASSED" ? "text-emerald-500" :
+                      statusData.static_validation_status === "FAILED" ? "text-red-500" : "text-themeTextMuted"
+                    }`}>
+                      {statusData.static_validation_status ?? "NOT_RUN"}
+                    </span>
+                  </div>
+                  {/* Compilation */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-themeBorder/40">
+                    <span className="text-themeTextMuted">Compilation</span>
+                    <span className={`font-semibold ${
+                      statusData.compile_status === "PASSED" ? "text-emerald-500" :
+                      statusData.compile_status === "FAILED" ? "text-red-500" : "text-themeTextMuted"
+                    }`}>
+                      {statusData.compile_status === "PASSED"
+                        ? (statusData.validation_confidence === "LOW" ? "Compile validated with warning" : "Compile validated")
+                        : (statusData.compile_status ?? "NOT_RUN")
+                      }
+                    </span>
+                  </div>
+                  {/* Runtime validation */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-themeBorder/40">
+                    <span className="text-themeTextMuted">Runtime Validation</span>
+                    <span className={`font-semibold ${
+                      statusData.runtime_validation_status === "PASSED" ? "text-emerald-500" : "text-amber-500"
+                    }`}>
+                      {statusData.runtime_validation_status === "PASSED" ? "Runtime validated" : "Runtime not tested"}
+                    </span>
+                  </div>
+                  {/* Semantic warnings */}
+                  <div className="pt-2">
+                    <span className="text-themeTextMuted block mb-1">Semantic Warnings</span>
+                    {statusData.validation_confidence === "LOW" && statusData.validation_confidence_reason ? (
+                      <div className="p-2.5 border border-amber-500/20 bg-amber-500/5 text-amber-600 rounded">
+                        {statusData.validation_confidence_reason}
+                      </div>
+                    ) : (
+                      <span className="text-themeTextMuted/60 italic">None</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Architecture Evidence */}
+              <div className="border border-themeBorder p-5 bg-themeCard flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xs font-semibold tracking-wider uppercase mb-4 text-[#D4AF37]">
+                    Architecture Evidence
+                  </h3>
+                  <div className="space-y-3 font-mono text-xs">
+                    <div className="flex justify-between py-1.5 border-b border-themeBorder/40">
+                      <span className="text-themeTextMuted">Requested Architecture</span>
+                      <span className="text-themeText font-semibold">{statusData.target_gpu_architecture ?? "gfx90a"}</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 border-b border-themeBorder/40">
+                      <span className="text-themeTextMuted">Actual Compiled Architecture</span>
+                      <span className={`font-semibold ${statusData.actual_compiled_architecture ? "text-emerald-500" : "text-amber-500"}`}>
+                        {statusData.actual_compiled_architecture || "N/A (Not compiled yet)"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {statusData.compile_command && (
+                  <div className="mt-4 pt-4 border-t border-themeBorder/40">
+                    <span className="text-[10px] font-medium tracking-[0.15em] uppercase text-themeTextMuted block mb-2">
+                      Successful Compiler Command
+                    </span>
+                    <pre className="overflow-x-auto border border-themeBorder p-3 font-mono text-[10px] text-themeText select-all bg-themeBgSecondary/30 leading-relaxed max-h-24">
+                      {statusData.compile_command}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Panel 5: AI Repair Details */}
+        {statusData?.ai_repair_status === "succeeded" && statusData?.patch_audit && statusData.patch_audit.length > 0 && (
+          <>
+            <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} aria-hidden="true" />
+            <section aria-labelledby="ai-repair-heading">
+              <div className="mb-6 pt-6" style={{ borderTop: "1px solid var(--border-primary)" }}>
+                <h2
+                  id="ai-repair-heading"
+                  className="text-[10px] font-medium tracking-[0.3em] uppercase text-themeTextMuted"
+                >
+                  AI Repair Evidence Panel
+                </h2>
+              </div>
+              <div className="space-y-6">
+                {statusData.patch_audit.map((patch, idx) => (
+                  <div key={idx} className="border border-themeBorder bg-themeCard p-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-themeBorder/40 pb-3">
+                      <div>
+                        <span className="text-[10px] uppercase font-mono tracking-widest text-[#D4AF37] block">Target File</span>
+                        <code className="text-sm font-semibold font-mono text-themeText">{patch.target_file}</code>
+                      </div>
+                      <div className="flex gap-4">
+                        <div>
+                          <span className="text-[10px] uppercase font-mono tracking-widest text-themeTextMuted block text-right">Status</span>
+                          <span className={`text-xs font-semibold px-2 py-0.5 border ${
+                            patch.accepted
+                              ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
+                              : "text-red-500 border-red-500/20 bg-red-500/5"
+                          }`}>
+                            {patch.accepted ? "ACCEPTED" : "REJECTED"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-mono tracking-widest text-themeTextMuted block text-right">Changed Lines</span>
+                          <span className="text-xs font-mono font-semibold text-themeText block text-right">{patch.changed_lines} lines</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+                      <div>
+                        <span className="text-themeTextMuted block mb-0.5">Pre-patch Hash:</span>
+                        <code className="bg-themeBgSecondary/40 px-1.5 py-0.5 border border-themeBorder text-[10px] break-all">{patch.before_hash || "n/a"}</code>
+                      </div>
+                      <div>
+                        <span className="text-themeTextMuted block mb-0.5">Post-patch Hash:</span>
+                        <code className="bg-themeBgSecondary/40 px-1.5 py-0.5 border border-themeBorder text-[10px] break-all">{patch.after_hash || "n/a"}</code>
+                      </div>
+                    </div>
+
+                    {patch.reason && (
+                      <div>
+                        <span className="text-[10px] uppercase font-mono tracking-widest text-themeTextMuted block mb-1">Reason</span>
+                        <p className="text-xs text-themeText leading-relaxed">{patch.reason}</p>
+                      </div>
+                    )}
+
+                    {patch.arch_warning && (
+                      <div className="p-3 border border-red-500/20 bg-red-500/5 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5">
+                        <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold uppercase tracking-wider block mb-0.5">Architecture-Sensitive Warning</span>
+                          <span>{patch.arch_warning}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {patch.diff && (
+                      <div>
+                        <span className="text-[10px] uppercase font-mono tracking-widest text-themeTextMuted block mb-1.5">Unified Patch Diff</span>
+                        <pre className="overflow-x-auto p-4 bg-black/40 font-mono text-[11px] leading-relaxed text-themeText/90 border border-themeBorder max-h-[350px] select-all">
+                          {patch.diff}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* Panel 6: Compilation Attempt History */}
+        {statusData?.compilation_history && statusData.compilation_history.length > 0 && (
+          <>
+            <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} aria-hidden="true" />
+            <section aria-labelledby="compilation-history-heading">
+              <div className="mb-6 pt-6" style={{ borderTop: "1px solid var(--border-primary)" }}>
+                <h2
+                  id="compilation-history-heading"
+                  className="text-[10px] font-medium tracking-[0.3em] uppercase text-themeTextMuted"
+                >
+                  Compilation Attempt History
+                </h2>
+              </div>
+              <div className="space-y-4">
+                {statusData.compilation_history.map((attempt: any, idx: number) => {
+                  const isPassed = attempt.compiler_result === "SUCCESS" || attempt.compiler_result === "PASSED" || attempt.status === "PASSED" || attempt.status === "SUCCESS";
+                  return (
+                    <div key={idx} className="border border-themeBorder bg-themeCard p-5 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-themeBorder/40 pb-2">
+                        <div className="flex items-center gap-3">
+                          <History className="h-4 w-4 text-[#D4AF37]" />
+                          <span className="text-xs font-semibold font-mono text-themeText">Attempt #{attempt.attempt}</span>
+                        </div>
+                        <div className="flex items-center gap-3 font-mono text-xs">
+                          <span className={`px-2 py-0.5 border ${
+                            isPassed
+                              ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
+                              : "text-red-500 border-red-500/20 bg-red-500/5"
+                          }`}>
+                            {isPassed ? "SUCCESS" : "FAILED"}
+                          </span>
+                          {attempt.cache_hit !== null && (
+                            <span className={`px-2 py-0.5 border ${
+                              attempt.cache_hit
+                                ? "text-indigo-400 border-indigo-500/20 bg-indigo-500/5"
+                                : "text-amber-500 border-amber-500/20 bg-amber-500/5"
+                            }`}>
+                              {attempt.cache_hit ? "CACHE HIT" : "CACHE MISS"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 text-xs font-mono">
+                        {attempt.cache_key && (
+                          <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-4 border-b border-themeBorder/20 pb-2">
+                            <span className="text-themeTextMuted w-24 shrink-0 font-sans">Cache Key:</span>
+                            <code className="text-[11px] select-all bg-themeBgSecondary/30 px-1.5 py-0.5 border border-themeBorder break-all">{attempt.cache_key}</code>
+                          </div>
+                        )}
+
+                        {attempt.command && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-themeTextMuted font-sans">Compiler Command:</span>
+                            <pre className="p-3 border border-themeBorder font-mono text-[10px] text-themeText select-all bg-themeBgSecondary/20 whitespace-pre-wrap leading-relaxed">
+                              {attempt.command}
+                            </pre>
+                          </div>
+                        )}
+
+                        {attempt.source_input_hash && (
+                          <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-4 pt-2">
+                            <span className="text-themeTextMuted w-24 shrink-0 font-sans">Input Hash:</span>
+                            <code className="text-[11px] select-all bg-themeBgSecondary/30 px-1.5 py-0.5 border border-themeBorder break-all">{attempt.source_input_hash}</code>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </>
+        )}
+
+        <div className="h-px" style={{ backgroundColor: "var(--border-primary)" }} aria-hidden="true" />
+
+        {/* Panel 7: Report Viewer */}
         <section aria-labelledby="report-heading">
           <div className="mb-6 pt-6" style={{ borderTop: "1px solid var(--border-primary)" }}>
             <h2

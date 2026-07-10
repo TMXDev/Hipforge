@@ -14,20 +14,20 @@ async def get_migration_status_v1(migration_id: str):
     # 1. Fetch status key
     s_key = status_key(migration_id)
     redis_status = await app.redis.client.redis_client.get(s_key)
-    
+
     # 2. Fetch metadata
     m_key = metadata_key(migration_id)
     metadata = await app.redis.client.redis_client.hgetall(m_key)
-    
+
     # 3. Raise 404 if both status and metadata do not exist in Redis
     if not redis_status and not metadata:
         raise HTTPException(status_code=404, detail="Migration not found")
-        
+
     status = redis_status or "QUEUED"
     stage = status
     created_at = metadata.get("created_at") or ""
     updated_at = created_at
-    
+
     # 4. Read latest journal entry for stage & updated_at overrides
     j_key = journal_key(migration_id)
     try:
@@ -36,13 +36,13 @@ async def get_migration_status_v1(migration_id: str):
             last_entry = json.loads(last_journal_list[0])
             stage = last_entry.get("workflow_state", stage)
             updated_at = last_entry.get("timestamp", updated_at)
-            
+
             # If status in Redis is QUEUED but we have journal entries, the job is RUNNING
             if status == "QUEUED":
                 status = "RUNNING"
     except Exception:
         pass
-        
+
     error_category = metadata.get("error_category") or "NONE" if isinstance(metadata, dict) else "NONE"
     recommended_next_action = metadata.get("recommended_next_action") or "" if isinstance(metadata, dict) else ""
     project_scan = None
@@ -69,6 +69,37 @@ async def get_migration_status_v1(migration_id: str):
     compile_command = metadata.get("last_compile_command") or ""
     main_error = metadata.get("main_error") or metadata.get("last_compile_stderr") or metadata.get("failure_reason") or ""
 
+    # Load JSON report fields if available
+    target_gpu_architecture = metadata.get("target_architecture") or metadata.get("target_gpu_architecture") or "gfx90a"
+    actual_compiled_architecture = ""
+    ai_repair_status = "not_needed"
+    patch_audit = []
+    compilation_history = []
+
+    try:
+        from app.workspace.manager import get_workspace_path
+        workspace_path = get_workspace_path(migration_id)
+        json_file = workspace_path / "reports" / "migration_report.json"
+        if json_file.exists():
+            with open(json_file, "r", encoding="utf-8") as f:
+                report_data = json.load(f)
+                summary_data = report_data.get("migration_summary", {})
+                final_sum = report_data.get("final_summary", {})
+                metrics = report_data.get("migration_metrics", {})
+
+                target_gpu_architecture = summary_data.get("target_gpu_architecture") or metrics.get("target_architecture") or target_gpu_architecture
+                actual_compiled_architecture = final_sum.get("actual_compiled_architecture") or metrics.get("actual_compiled_architecture") or ""
+                ai_repair_status = final_sum.get("ai_repair_status") or metrics.get("ai_repair_status") or "not_needed"
+                patch_audit = report_data.get("patch_audit") or []
+                compilation_history = report_data.get("compilation_history") or []
+
+                val_conf_block = report_data.get("validation_confidence", {})
+                if val_conf_block:
+                    validation_confidence = val_conf_block.get("validation_confidence") or validation_confidence
+                    validation_confidence_reason = val_conf_block.get("validation_confidence_reason") or validation_confidence_reason
+    except Exception:
+        pass
+
     return MigrationStatusResponse(
         migration_id=migration_id,
         status=status,
@@ -90,7 +121,12 @@ async def get_migration_status_v1(migration_id: str):
         static_validation_status=static_validation_status,
         compiler_mode=compiler_mode,
         compile_command=compile_command,
-        main_error=main_error
+        main_error=main_error,
+        target_gpu_architecture=target_gpu_architecture,
+        actual_compiled_architecture=actual_compiled_architecture,
+        ai_repair_status=ai_repair_status,
+        patch_audit=patch_audit,
+        compilation_history=compilation_history
     )
 
 
@@ -101,7 +137,7 @@ async def get_compiler_logs_v1(migration_id: str):
     from app.redis.keys import compiler_log_key
     if not await redis_client.get(status_key(migration_id)) and not await redis_client.hgetall(metadata_key(migration_id)):
         raise HTTPException(status_code=404, detail="Migration not found")
-    
+
     c_key = compiler_log_key(migration_id)
     logs_raw = await redis_client.lrange(c_key, 0, -1)
     return [json.loads(line) for line in logs_raw]

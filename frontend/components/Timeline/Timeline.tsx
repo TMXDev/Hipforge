@@ -103,6 +103,18 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
 
         // 2. Set current active stage if running
         if (statusData) {
+          const repairStatus = (statusData.ai_repair_status || "").toLowerCase();
+          if (repairStatus === "succeeded" || repairStatus === "failed" || (statusData.compilation_history && statusData.compilation_history.length > 1)) {
+            const analyzing = initial.get("ANALYZING");
+            if (analyzing && analyzing.status === "pending") {
+              initial.set("ANALYZING", { ...analyzing, status: "completed", message: "AI code repair completed." });
+            }
+            const patching = initial.get("PATCHING");
+            if (patching && patching.status === "pending") {
+              initial.set("PATCHING", { ...patching, status: "completed", message: "Code patches successfully generated." });
+            }
+          }
+
           const currentStatus = (statusData.status || "").toUpperCase();
           const currentStage = (statusData.stage || "").toUpperCase() as JobState;
 
@@ -185,7 +197,33 @@ export default function Timeline({ migrationId, events = [] }: TimelineProps) {
     onMessage: handleMessage,
   });
 
-  const stageList = useMemo(() => STAGE_META, []);
+  const stageList = useMemo(() => {
+    let hasAnalyzing = false;
+    let hasPatching = false;
+
+    // Check if stages are not pending
+    const analyzingStage = stages.get("ANALYZING");
+    if (analyzingStage && analyzingStage.status !== "pending") {
+      hasAnalyzing = true;
+    }
+    const patchingStage = stages.get("PATCHING");
+    if (patchingStage && patchingStage.status !== "pending") {
+      hasPatching = true;
+    }
+
+    // Check events
+    for (const ev of events) {
+      const st = (ev.stage ?? ev.state ?? "").toUpperCase();
+      if (st === "ANALYZING") hasAnalyzing = true;
+      if (st === "PATCHING") hasPatching = true;
+    }
+
+    return STAGE_META.filter((meta) => {
+      if (meta.state === "ANALYZING") return hasAnalyzing;
+      if (meta.state === "PATCHING") return hasPatching;
+      return true;
+    });
+  }, [stages, events]);
 
   return (
     <div className="w-full">

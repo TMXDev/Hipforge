@@ -76,6 +76,7 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
 
   const [targetGpu, setTargetGpu] = useState<GpuArchitecture>("gfx1100");
   const [retryBudget, setRetryBudget] = useState<number>(3);
+  const [migrationMode, setMigrationMode] = useState<string>("Balanced");
 
   /** Validates file type and size. Returns an error string or null. */
   const validateFile = useCallback((file: File): string | null => {
@@ -211,7 +212,7 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
       setSubmitError(null);
       setIsSubmitting(true);
       try {
-        const result = await submitMigration(file, targetGpu, retryBudget);
+        const result = await submitMigration(file, targetGpu, retryBudget, migrationMode);
         onSuccess(result.migration_id);
       } catch (err: unknown) {
         const message =
@@ -231,7 +232,7 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
     setIsSubmitting(true);
 
     try {
-      const result = await submitMigration(selectedFile, targetGpu, retryBudget);
+      const result = await submitMigration(selectedFile, targetGpu, retryBudget, migrationMode);
       onSuccess(result.migration_id);
     } catch (err: unknown) {
       const message =
@@ -242,7 +243,7 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedFile, pastedCode, isSubmitting, inputMode, targetGpu, retryBudget, onSuccess]);
+  }, [selectedFile, pastedCode, isSubmitting, inputMode, targetGpu, retryBudget, migrationMode, onSuccess]);
 
   const canSubmit =
     !isSubmitting &&
@@ -473,7 +474,7 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
               />
             </div>
             <p className="text-[9px] leading-relaxed text-themeTextMuted/60 uppercase tracking-wider">
-              Sets the --offload-arch compilation target target for ROCm/HIP.
+              Sets the <code className="font-mono text-[9px] text-[#D4AF37]">--offload-arch</code> target for ROCm/HIP compilation.
             </p>
           </div>
 
@@ -510,7 +511,7 @@ export default function UploadCard({ onSuccess }: UploadCardProps) {
               />
             </div>
             <p className="text-[9px] leading-relaxed text-themeTextMuted/60 uppercase tracking-wider">
-              Max AI analysis and patch cycles to resolve compilation errors.
+              Max cycles to resolve compile errors. 3-5 recommended for complex GPU code.
             </p>
           </div>
         </div>
