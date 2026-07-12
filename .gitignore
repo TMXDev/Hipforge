@@ -38,7 +38,14 @@ tsconfig.tsbuildinfo
 *.7z
 
 # Local agent state
-.agent/SESSION_STATE.json
+.agent/
+.agents/
+
+# Documentation & Showcases
+docs/
+demo-showcase/
+migration_output/
+hipforge-current-working-tree.patch
 
 # OS Files
 .DS_Store
